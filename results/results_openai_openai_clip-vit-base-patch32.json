@@ -1,0 +1,20 @@
+{
+  "step_accuracies": {
+    "CT": {
+      "accuracy": 0.99,
+      "num_samples": 100
+    },
+    "MRI": {
+      "accuracy": 0.83,
+      "num_samples": 100
+    },
+    "CT+MRI": {
+      "accuracy": 0.91,
+      "num_samples": 200
+    }
+  },
+  "modalities": [
+    "CT",
+    "MRI"
+  ]
+}
