@@ -50,13 +50,7 @@ Results are saved to `results/` directory in JSON format with accuracy metrics f
 
 See `requirements.txt` for full dependencies.
 
-## Supported Models
 
-- `openai/clip-vit-large-patch14`
-- `openai/clip-vit-base-patch32`
-- `openai/clip-vit-base-patch16`
-- `microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224`
-- And other CLIP-compatible models
 
 ## Project Structure
 
