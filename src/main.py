@@ -238,9 +238,7 @@ def main():
         args.output_dir,
         f'results_{args.model_name.replace("/", "_")}.json'
     )
-    save_results(evaluation_results, output_file)
     
-    print(f"\nEvaluation complete! Results saved to {output_file}")
 
 
 if __name__ == '__main__':

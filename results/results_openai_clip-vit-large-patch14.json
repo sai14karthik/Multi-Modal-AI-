@@ -2,15 +2,15 @@
   "step_accuracies": {
     "CT": {
       "accuracy": 0.99,
-      "num_samples": 100
+      "num_samples": 200
     },
     "MRI": {
-      "accuracy": 0.83,
-      "num_samples": 100
+      "accuracy": 0.815,
+      "num_samples": 200
     },
     "CT+MRI": {
-      "accuracy": 0.91,
-      "num_samples": 200
+      "accuracy": 0.9025,
+      "num_samples": 400
     }
   },
   "modalities": [
