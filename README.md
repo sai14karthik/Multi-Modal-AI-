@@ -1,17 +1,5 @@
 # Multi-Modal-AI
 
-Sequential modality evaluation for brain tumor classification using CLIP-based zero-shot classification.
-
-## Overview
-
-This project evaluates multimodal AI models (CT, MRI, and CT+MRI) for binary brain tumor classification (Healthy vs. Tumor) using zero-shot CLIP models.
-
-## Features
-
-- Sequential modality evaluation: MRI → CT → CT+MRI mix
-- Support for multiple CLIP models (OpenAI CLIP, BiomedCLIP, etc.)
-- Batch processing support
-- Comprehensive evaluation metrics
 
 ## Dataset
 
