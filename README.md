@@ -1,4 +1,4 @@
-# Multi-Modal-AI
+# Multi-Modal-AI Project
 
 
 ## Dataset
