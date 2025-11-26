@@ -39,7 +39,6 @@ def get_all_images_by_modality(
     modality_folders = {
         'CT': 'Brain Tumor CT scan Images',
         'MRI': 'Brain Tumor MRI images',
-        'Mammography': 'Mammography',
     }
     
     folder_name = modality_folders.get(modality, modality)

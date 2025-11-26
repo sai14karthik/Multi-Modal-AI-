@@ -3,42 +3,17 @@ Sequential modality evaluation script.
 Evaluates model performance with CT only, MRI only, and CT+MRI.
 """
 
-import os
-import sys
-import types
-import importlib.util
-
-# Suppress transformers warnings and prevent TensorFlow import errors
-os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-# Mock TensorFlow before transformers tries to import it
-if 'tensorflow' not in sys.modules:
-    tf_mock = types.ModuleType('tensorflow')
-    # Create a proper spec for the mock
-    spec = importlib.util.spec_from_loader('tensorflow', loader=None)
-    tf_mock.__spec__ = spec
-    tf_mock.__version__ = '2.0.0'
-    
-    # Add common TensorFlow attributes that transformers might check
-    class MockTensor:
-        pass
-    class MockVariable:
-        pass
-    tf_mock.Tensor = MockTensor
-    tf_mock.Variable = MockVariable
-    
-    # Mock submodules
-    tf_mock.image = types.ModuleType('tensorflow.image')
-    tf_mock.nn = types.ModuleType('tensorflow.nn')
-    
-    sys.modules['tensorflow'] = tf_mock
-
 import argparse
+import os
 import random
+
+from src.utils.tf_mock import ensure_tensorflow_stub
+
+ensure_tensorflow_stub()
+
+from PIL import Image
 import torch
 from tqdm import tqdm
-from PIL import Image
 
 from src.data.dataloader import get_all_images_by_modality
 from src.models.model_wrapper import MultimodalModelWrapper
@@ -47,7 +22,6 @@ from src.utils.evaluation import (
     print_evaluation_results,
     save_results
 )
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -95,6 +69,27 @@ def main():
         type=int,
         default=1,
         help='Batch size for inference (default: 1). Use larger values (e.g., 8, 16) for faster GPU processing'
+    )
+    parser.add_argument(
+        '--no_preprocess',
+        action='store_true',
+        help='Disable medical image preprocessing (contrast enhancement, histogram equalization)'
+    )
+    parser.add_argument(
+        '--temperature',
+        type=float,
+        default=1.0,
+        help='Temperature scaling for logits (default: 1.0, lower = more confident predictions)'
+    )
+    parser.add_argument(
+        '--no_weighted_ensemble',
+        action='store_true',
+        help='Disable weighted prompt ensemble (use simple mean instead)'
+    )
+    parser.add_argument(
+        '--no_swap_test',
+        action='store_true',
+        help='Disable testing both swap strategies (use original swap only)'
     )
     
     args = parser.parse_args()
@@ -156,7 +151,11 @@ def main():
             prediction = model.predict(
                 images={args.modalities[1]: img},
                 available_modalities=[args.modalities[1]],
-                batch_size=args.batch_size
+                batch_size=args.batch_size,
+                preprocess=not args.no_preprocess,
+                temperature=args.temperature,
+                use_weighted_ensemble=not args.no_weighted_ensemble,
+                try_both_swaps=not args.no_swap_test
             )
             results[case_id].append({
                 'modalities_used': [args.modalities[1]],
@@ -184,7 +183,11 @@ def main():
             prediction = model.predict(
                 images={args.modalities[0]: img},
                 available_modalities=[args.modalities[0]],
-                batch_size=args.batch_size
+                batch_size=args.batch_size,
+                preprocess=not args.no_preprocess,
+                temperature=args.temperature,
+                use_weighted_ensemble=not args.no_weighted_ensemble,
+                try_both_swaps=not args.no_swap_test
             )
             results[case_id].append({
                 'modalities_used': [args.modalities[0]],
@@ -213,7 +216,11 @@ def main():
             prediction = model.predict(
                 images={mod: img},
                 available_modalities=[mod],
-                batch_size=args.batch_size
+                batch_size=args.batch_size,
+                preprocess=not args.no_preprocess,
+                temperature=args.temperature,
+                use_weighted_ensemble=not args.no_weighted_ensemble,
+                try_both_swaps=not args.no_swap_test
             )
             results[case_id].append({
                 'modalities_used': [mod],
@@ -238,7 +245,7 @@ def main():
         args.output_dir,
         f'results_{args.model_name.replace("/", "_")}.json'
     )
-    
+    save_results(evaluation_results, output_file)
 
 
 if __name__ == '__main__':
