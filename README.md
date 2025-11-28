@@ -3,9 +3,28 @@
 
 ## Dataset
 
-- **CT Images**: 4,618 total (2,300 Healthy, 2,318 Tumor)
-- **MRI Images**: 5,000 total (2,000 Healthy, 3,000 Tumor)
-- **Total**: 9,618 images
+### Recommended: TCIA Lung-PET-CT-Dx
+
+- 355 patients with paired CT + PET series and clinical metadata (histopathology, smoking history, etc.).
+- Prepare the dataset using the new script:
+
+```bash
+python -m src.data.prepare_lung_pet_ct \
+    --raw_root dataset/manifest-<id>/Lung-PET-CT-Dx \
+    --metadata_csv dataset/manifest-<id>/metadata.csv \
+    --clinical_excel dataset/statistics-clinical-20201221.xlsx \
+    --data_root data \
+    --dataset_name Lung-PET-CT-Dx \
+    --label_strategy histology_grade \
+    --ct_slice_interval 3 \
+    --pet_slice_interval 1
+```
+
+This converts all CT/PET DICOM slices into PNGs under `data/Lung-PET-CT-Dx/{CT,PT}/<class>` and writes `metadata.csv` with patient IDs, modality identifiers, histology-based class labels (`high_grade`, `low_grade`), and deterministic train/val/test splits.
+
+### Legacy Brain Tumor Demo
+
+If you want the earlier CT/MRI toy dataset, keep the original folder structure (`data/Brain Tumor CT scan Images`, `data/Brain Tumor MRI images`) and run without `--dataset_config`. The loader automatically falls back to the legacy mapping.
 
 ## Installation
 
@@ -19,31 +38,68 @@ pip install -r requirements.txt
 ```bash
 python -m src.main \
     --data_root data \
-    --modalities CT MRI \
+    --modalities CT PET \
     --model_name openai/clip-vit-large-patch14 \
     --output_dir results \
     --batch_size 1 \
-    --max_samples 100
+    --max_samples 100 \
+    --dataset_config data/dataset_config.yaml \
+    --class_names high_grade low_grade \
+    --split val
+```
+
+### Single-Modality Fallback (CT only)
+If you only have CT prepared, enable the fallback flag:
+
+```bash
+python -m src.main \
+    --data_root data \
+    --modalities CT \
+    --allow_single_modality \
+    --model_name openai/clip-vit-large-patch14 \
+    --output_dir results \
+    --batch_size 1 \
+    --dataset_config data/dataset_config.yaml \
+    --class_names high_grade low_grade
+```
+
+### Using LLaVA (Large Multimodal LLM)
+```bash
+python -m src.main \
+    --data_root data \
+    --modalities CT PET \
+    --model_arch llava \
+    --model_name liuhaotian/llava-v1.6-mistral-7b \
+    --output_dir results \
+    --batch_size 1 \
+    --dataset_config data/dataset_config.yaml \
+    --class_names high_grade low_grade \
+    --split val --max_samples 10
 ```
 
 ### Use Best Available Model (Recommended)
 ```bash
 python -m src.main \
     --data_root data \
-    --modalities CT MRI \
+    --modalities CT PET \
     --model_name laion/CLIP-ViT-H-14-laion2B-s32B-b79K \
     --output_dir results \
-    --batch_size 1
+    --batch_size 1 \
+    --dataset_config data/dataset_config.yaml \
+    --class_names high_grade low_grade \
+    --split test
 ```
 
 ### Use Medical-Specific Model
 ```bash
 python -m src.main \
     --data_root data \
-    --modalities CT MRI \
+    --modalities CT PET \
     --model_name microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224 \
     --output_dir results \
-    --batch_size 1
+    --batch_size 1 \
+    --dataset_config data/dataset_config.yaml \
+    --class_names high_grade low_grade
 ```
 
 Or use the provided script:
@@ -64,7 +120,12 @@ bash run.sh
 - `--temperature`: Temperature scaling (default: 1.0, try 0.5-2.0)
 - `--no_weighted_ensemble`: Disable weighted prompt averaging (use simple mean)
 - `--no_swap_test`: Disable dual strategy testing (use original swap only)
-- `--model_name`: Try different CLIP models (e.g., `microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224`)
+- `--model_arch`: Choose between `clip` (default) and `llava`
+- `--model_name`: Try different CLIP/LLaVA checkpoints (e.g., `microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224`, `liuhaotian/llava-v1.6-mistral-7b`)
+- `--dataset_config`: Path to YAML describing modality folders/classes (defaults to legacy brain tumor)
+- `--class_names`: Two class labels used for prompt construction (e.g., `high_grade low_grade`). These should match the folder names inside each modality.
+- `--allow_single_modality`: Skip steps 2/3 and run CT-only inference when no second modality exists.
+- `--split`: Filter slices by split defined in metadata (train/val/test)
 
 ## Results
 

@@ -1,0 +1,83 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Model checkpoints and weights
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+checkpoints/
+models/
+*.h5
+*.pb
+
+# Data directories (large files)
+data/
+!data/dataset_config.yaml
+!data/.gitkeep
+
+# Results and outputs
+results/
+outputs/
+logs/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Hugging Face cache
+.cache/
+.huggingface/
+transformers_cache/
+
+# Environment variables
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# LLaVA-Med specific
+third_party/llava-med/checkpoints/
+third_party/llava-med/__pycache__/
+
+# Test outputs
+.pytest_cache/
+.coverage
+htmlcov/
+

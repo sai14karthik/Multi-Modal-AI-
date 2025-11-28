@@ -1,0 +1,3 @@
+[submodule "third_party/llava-med"]
+	path = third_party/llava-med
+	url = https://github.com/microsoft/LLaVA-Med

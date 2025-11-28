@@ -24,22 +24,23 @@ def evaluate_sequential_modalities(
     modalities: List[str]
 ) -> Dict:
     """
-    Evaluate model performance for CT, MRI, and CT+MRI.
+    Evaluate model performance for each modality (and optional mix).
     
     Args:
         results: Dictionary with keys as case_ids and values as lists of predictions
                  Each prediction dict should have 'modalities_used', 'prediction', 'label'
-        modalities: Ordered list of modalities [CT, MRI]
+        modalities: Ordered list of modalities supplied via CLI (length 1 or 2)
     
     Returns:
         Dictionary with accuracy metrics for each step
     """
     # Organize by modality combinations
     step_data = {
-        modalities[0]: {'predictions': [], 'labels': []},  # CT only
-        modalities[1]: {'predictions': [], 'labels': []},  # MRI only
-        '+'.join(modalities): {'predictions': [], 'labels': []}  # CT+MRI
+        modalities[0]: {'predictions': [], 'labels': []},
     }
+    if len(modalities) > 1:
+        step_data[modalities[1]] = {'predictions': [], 'labels': []}
+        step_data['+'.join(modalities)] = {'predictions': [], 'labels': []}
     
     for case_id, case_results in results.items():
         for result in case_results:
@@ -87,15 +88,22 @@ def print_evaluation_results(evaluation_results: Dict):
     print("="*60)
     
     step_accuracies = evaluation_results['step_accuracies']
+    modalities = evaluation_results.get('modalities', [])
     
     print(f"\n{'Modalities':<20} {'Accuracy':<15} {'Samples':<10}")
     print("-" * 60)
     
-    # Print in order: CT, MRI, CT+MRI
     for step_name in list(step_accuracies.keys()):
         acc = step_accuracies[step_name]['accuracy']
         num_samples = step_accuracies[step_name]['num_samples']
-        print(f"{step_name:<20} {acc:<15.4f} {num_samples:<10}")
+        
+        # For multimodal cases (e.g., "CT+PET"), show total images (pairs × modalities)
+        if '+' in step_name and len(modalities) > 1:
+            # Each pair contains one image from each modality
+            total_images = num_samples * len(modalities)
+            print(f"{step_name:<20} {acc:<15.4f} {total_images:<10}")
+        else:
+            print(f"{step_name:<20} {acc:<15.4f} {num_samples:<10}")
     
     print("="*60 + "\n")
 

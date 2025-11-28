@@ -3,6 +3,7 @@ CLIP-based model wrapper for medical image classification.
 Uses zero-shot classification with text prompts.
 """
 
+import contextlib
 import numpy as np
 from typing import Dict, List, Optional
 
@@ -18,13 +19,14 @@ from transformers import CLIPProcessor, CLIPModel
 class MultimodalModelWrapper:
     """
     CLIP model wrapper for sequential modality evaluation.
-    Performs binary classification: Healthy (0) vs Tumor (1).
+    Performs binary classification for two medical classes.
     """
     
     def __init__(
         self,
         model_name: str = "openai/clip-vit-large-patch14",
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        class_names: Optional[List[str]] = None
     ):
         """
         Args:
@@ -39,8 +41,27 @@ class MultimodalModelWrapper:
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_name = model_name
         self.is_biomedclip = "biomedclip" in model_name.lower() or "biomed" in model_name.lower()
+        self.class_names = class_names or ["Healthy", "Tumor"]
+        if len(self.class_names) != 2:
+            raise ValueError("MultimodalModelWrapper currently supports exactly two classes.")
+        self.class_names = [name.strip() for name in self.class_names]
+        self._default_classes = {name.lower() for name in self.class_names} == {"healthy", "tumor"}
         
         print(f"\nLoading model: {model_name}...")
+        
+        import sys
+        import os
+        
+        # Suppress stderr during model loading to hide verbose messages
+        @contextlib.contextmanager
+        def suppress_stderr():
+            with open(os.devnull, 'w') as devnull:
+                old_stderr = sys.stderr
+                try:
+                    sys.stderr = devnull
+                    yield
+                finally:
+                    sys.stderr = old_stderr
         
         try:
             # Try to load the specified model
@@ -48,8 +69,9 @@ class MultimodalModelWrapper:
                 loaded = False
                 
                 try:
-                    self.model = CLIPModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
-                    self.processor = CLIPProcessor.from_pretrained(model_name, trust_remote_code=True)
+                    with suppress_stderr():
+                        self.model = CLIPModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
+                        self.processor = CLIPProcessor.from_pretrained(model_name, trust_remote_code=True)
                     loaded = True
                 except Exception:
                     pass
@@ -57,8 +79,9 @@ class MultimodalModelWrapper:
                 if not loaded:
                     try:
                         from transformers import AutoModel, AutoProcessor
-                        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
-                        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+                        with suppress_stderr():
+                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
+                            self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
                         loaded = True
                     except Exception:
                         pass
@@ -66,12 +89,13 @@ class MultimodalModelWrapper:
                 if not loaded:
                     try:
                         from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoImageProcessor
-                        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
-                        try:
-                            self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-                        except:
-                            image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True)
-                            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                        with suppress_stderr():
+                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
+                            try:
+                                self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+                            except:
+                                image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True)
+                                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
                             class CombinedProcessor:
                                 def __init__(self, image_processor, tokenizer):
                                     self.image_processor = image_processor
@@ -91,38 +115,44 @@ class MultimodalModelWrapper:
                 
                 if not loaded:
                     self.model_name = "openai/clip-vit-large-patch14"
-                    self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
-                    self.processor = CLIPProcessor.from_pretrained(self.model_name)
+                    with suppress_stderr():
+                        self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
+                        self.processor = CLIPProcessor.from_pretrained(self.model_name)
             elif "laion" in model_name.lower():
                 # LAION CLIP models might need different loading
                 try:
-                    self.model = CLIPModel.from_pretrained(model_name).to(self.device)
-                    self.processor = CLIPProcessor.from_pretrained(model_name)
+                    with suppress_stderr():
+                        self.model = CLIPModel.from_pretrained(model_name).to(self.device)
+                        self.processor = CLIPProcessor.from_pretrained(model_name)
                 except Exception as e:
                     print(f"Warning: Could not load {model_name} as CLIPModel, trying AutoModel...")
                     try:
                         from transformers import AutoModel, AutoProcessor
-                        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
-                        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+                        with suppress_stderr():
+                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
+                            self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
                     except Exception as e2:
                         print(f"Error loading {model_name}: {e2}")
                         raise
             else:
-                self.model = CLIPModel.from_pretrained(model_name).to(self.device)
-                self.processor = CLIPProcessor.from_pretrained(model_name)
+                with suppress_stderr():
+                    self.model = CLIPModel.from_pretrained(model_name).to(self.device)
+                    self.processor = CLIPProcessor.from_pretrained(model_name)
         except Exception as e:
             print(f"Error loading {model_name}: {e}")
             print("Falling back to CLIP ViT-Large...")
             self.model_name = "openai/clip-vit-large-patch14"
             try:
-                self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
-                self.processor = CLIPProcessor.from_pretrained(self.model_name)
+                with suppress_stderr():
+                    self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
+                    self.processor = CLIPProcessor.from_pretrained(self.model_name)
             except Exception as fallback_error:
                 print(f"Error with fallback: {fallback_error}")
                 print("Falling back to CLIP ViT-Base...")
                 self.model_name = "openai/clip-vit-base-patch32"
-                self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
-                self.processor = CLIPProcessor.from_pretrained(self.model_name)
+                with suppress_stderr():
+                    self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
+                    self.processor = CLIPProcessor.from_pretrained(self.model_name)
         
         self.model.eval()
         
@@ -130,59 +160,75 @@ class MultimodalModelWrapper:
         self._init_enhanced_prompts()
     
     def _init_enhanced_prompts(self):
-        """Initialize diverse prompt strategies for better zero-shot classification."""
-        # Strategy 1: Direct descriptive prompts (original)
-        healthy_direct = [
-            "a medical brain scan showing healthy normal brain tissue with no tumors or abnormalities",
-            "a brain imaging scan with normal anatomy and no pathological findings",
-            "a healthy brain medical image showing normal tissue structure without disease",
-            "a normal brain scan image with no masses, lesions, or tumors visible"
-        ]
-        tumor_direct = [
-            "a medical brain scan showing a visible brain tumor or malignant mass",
-            "a brain imaging scan with abnormal mass, tumor growth, or cancerous lesion",
-            "a brain medical image showing pathology, tumor, or abnormal tissue",
-            "a brain scan image with visible tumor, mass, or pathological abnormality"
-        ]
-        
-        # Strategy 2: Clinical terminology
-        healthy_clinical = [
-            "a brain scan with normal brain parenchyma and no abnormal findings",
-            "a medical brain image showing normal cerebral anatomy without pathology",
-            "a brain scan demonstrating normal brain tissue architecture"
-        ]
-        tumor_clinical = [
-            "a brain scan with an intracranial mass or neoplasm",
-            "a medical brain image showing an abnormal brain lesion or tumor",
-            "a brain scan demonstrating pathological brain tissue or mass"
-        ]
-        
-        # Strategy 3: Simple, clear descriptions
-        healthy_simple = [
-            "a normal healthy brain scan",
-            "a brain scan with no tumor",
-            "a healthy brain image"
-        ]
-        tumor_simple = [
-            "a brain scan with a tumor",
-            "a brain scan showing a brain tumor",
-            "an abnormal brain scan with tumor"
-        ]
-        
-        # Combine all strategies
-        self.healthy_prompts = healthy_direct + healthy_clinical + healthy_simple
-        self.tumor_prompts = tumor_direct + tumor_clinical + tumor_simple
-        
-        # Create interleaved prompts: [healthy1, tumor1, healthy2, tumor2, ...]
+        """Initialize diverse prompt strategies for zero-shot classification."""
+        first_class, second_class = self.class_names
+
+        if self._default_classes:
+            # Strategy 1: Direct descriptive prompts (original)
+            healthy_direct = [
+                "a medical brain scan showing healthy normal brain tissue with no tumors or abnormalities",
+                "a brain imaging scan with normal anatomy and no pathological findings",
+                "a healthy brain medical image showing normal tissue structure without disease",
+                "a normal brain scan image with no masses, lesions, or tumors visible"
+            ]
+            tumor_direct = [
+                "a medical brain scan showing a visible brain tumor or malignant mass",
+                "a brain imaging scan with abnormal mass, tumor growth, or cancerous lesion",
+                "a brain medical image showing pathology, tumor, or abnormal tissue",
+                "a brain scan image with visible tumor, mass, or pathological abnormality"
+            ]
+            
+            # Strategy 2: Clinical terminology
+            healthy_clinical = [
+                "a brain scan with normal brain parenchyma and no abnormal findings",
+                "a medical brain image showing normal cerebral anatomy without pathology",
+                "a brain scan demonstrating normal brain tissue architecture"
+            ]
+            tumor_clinical = [
+                "a brain scan with an intracranial mass or neoplasm",
+                "a medical brain image showing an abnormal brain lesion or tumor",
+                "a brain scan demonstrating pathological brain tissue or mass"
+            ]
+            
+            # Strategy 3: Simple, clear descriptions
+            healthy_simple = [
+                "a normal healthy brain scan",
+                "a brain scan with no tumor",
+                "a healthy brain image"
+            ]
+            tumor_simple = [
+                "a brain scan with a tumor",
+                "a brain scan showing a brain tumor",
+                "an abnormal brain scan with tumor"
+            ]
+            
+            first_prompts = healthy_direct + healthy_clinical + healthy_simple
+            second_prompts = tumor_direct + tumor_clinical + tumor_simple
+            prompt_weights = [1.0] * len(healthy_direct) + [0.8] * len(healthy_clinical) + [0.6] * len(healthy_simple)
+        else:
+            context_hint = "lung cancer" if any(
+                keyword in first_class.lower() + second_class.lower()
+                for keyword in ["lung", "nsclc", "adenocarcinoma", "squamous"]
+            ) else "medical"
+            first_prompts = [
+                f"a {context_hint} imaging scan showing {first_class} characteristics",
+                f"a clinical radiology image labeled as {first_class}",
+                f"a diagnostic slice that is representative of {first_class}",
+            ]
+            second_prompts = [
+                f"a {context_hint} imaging scan showing {second_class} characteristics",
+                f"a clinical radiology image labeled as {second_class}",
+                f"a diagnostic slice that is representative of {second_class}",
+            ]
+            prompt_weights = [1.0] * len(first_prompts)
+
+        # Create interleaved prompts: [classA1, classB1, classA2, classB2, ...]
         self.class_prompts = [
-            prompt for pair in zip(self.healthy_prompts, self.tumor_prompts) 
+            prompt for pair in zip(first_prompts, second_prompts)
             for prompt in pair
         ]
-        
-        # Weights for different prompt strategies (direct > clinical > simple)
-        self.prompt_weights = [1.0] * len(healthy_direct) + [0.8] * len(healthy_clinical) + [0.6] * len(healthy_simple)
         # Interleave weights to match prompt order
-        self.weights = [w for pair in zip(self.prompt_weights, self.prompt_weights) for w in pair]
+        self.weights = [w for pair in zip(prompt_weights, prompt_weights) for w in pair]
     
     def _preprocess_medical_image(self, image: Image.Image) -> Image.Image:
         """
@@ -359,12 +405,14 @@ class MultimodalModelWrapper:
         prediction = probs.argmax().item()
         confidence = probs.max().item()
         
+        prob_dict = {
+            self.class_names[0].lower(): probs[0].item(),
+            self.class_names[1].lower(): probs[1].item()
+        }
+        
         return {
             'prediction': prediction,
             'confidence': confidence,
-            'probabilities': {
-                'healthy': probs[0].item(),
-                'tumor': probs[1].item()
-            }
+            'probabilities': prob_dict
         }
 
