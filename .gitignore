@@ -38,12 +38,12 @@ Thumbs.db
 *.safetensors
 *.ckpt
 checkpoints/
-models/
+# models/
 *.h5
 *.pb
 
 # Data directories (large files)
-data/
+# data/
 !data/dataset_config.yaml
 !data/.gitkeep
 

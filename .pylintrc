@@ -1,0 +1,3 @@
+[MASTER]
+ignore=third_party
+ignore-patterns=third_party/*

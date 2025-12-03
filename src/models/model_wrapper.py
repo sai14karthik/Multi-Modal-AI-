@@ -93,22 +93,25 @@ class MultimodalModelWrapper:
                             self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
                             try:
                                 self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
-                            except:
+                            except Exception:
+                                # If AutoProcessor fails, create a CombinedProcessor
                                 image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True)
                                 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-                            class CombinedProcessor:
-                                def __init__(self, image_processor, tokenizer):
-                                    self.image_processor = image_processor
-                                    self.tokenizer = tokenizer
-                                def __call__(self, text=None, images=None, return_tensors=None, padding=None, **kwargs):
-                                    result = {}
-                                    if images is not None:
-                                        result.update(self.image_processor(images, return_tensors=return_tensors))
-                                    if text is not None:
-                                        text_result = self.tokenizer(text, return_tensors=return_tensors, padding=padding, **kwargs)
-                                        result.update(text_result)
-                                    return result
-                            self.processor = CombinedProcessor(image_processor, tokenizer)
+                                
+                                class CombinedProcessor:
+                                    def __init__(self, image_processor, tokenizer):
+                                        self.image_processor = image_processor
+                                        self.tokenizer = tokenizer
+                                    def __call__(self, text=None, images=None, return_tensors=None, padding=None, **kwargs):
+                                        result = {}
+                                        if images is not None:
+                                            result.update(self.image_processor(images, return_tensors=return_tensors))
+                                        if text is not None:
+                                            text_result = self.tokenizer(text, return_tensors=return_tensors, padding=padding, **kwargs)
+                                            result.update(text_result)
+                                        return result
+                                
+                                self.processor = CombinedProcessor(image_processor, tokenizer)
                         loaded = True
                     except Exception:
                         pass
@@ -150,9 +153,15 @@ class MultimodalModelWrapper:
                 print(f"Error with fallback: {fallback_error}")
                 print("Falling back to CLIP ViT-Base...")
                 self.model_name = "openai/clip-vit-base-patch32"
-                with suppress_stderr():
-                    self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
-                    self.processor = CLIPProcessor.from_pretrained(self.model_name)
+                try:
+                    with suppress_stderr():
+                        self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
+                        self.processor = CLIPProcessor.from_pretrained(self.model_name)
+                except Exception as final_error:
+                    raise RuntimeError(
+                        f"Failed to load any CLIP model. Original error: {e}, "
+                        f"Fallback 1 error: {fallback_error}, Fallback 2 error: {final_error}"
+                    ) from final_error
         
         self.model.eval()
         
@@ -164,64 +173,85 @@ class MultimodalModelWrapper:
         first_class, second_class = self.class_names
 
         if self._default_classes:
-            # Strategy 1: Direct descriptive prompts (original)
+            # Strategy 1: Direct descriptive prompts (lung-specific)
             healthy_direct = [
-                "a medical brain scan showing healthy normal brain tissue with no tumors or abnormalities",
-                "a brain imaging scan with normal anatomy and no pathological findings",
-                "a healthy brain medical image showing normal tissue structure without disease",
-                "a normal brain scan image with no masses, lesions, or tumors visible"
+                "a medical lung CT or PET scan showing healthy normal lung tissue with no tumors or abnormalities",
+                "a lung imaging scan with normal anatomy and no pathological findings",
+                "a healthy lung medical image showing normal tissue structure without disease",
+                "a normal lung scan image with no masses, lesions, or tumors visible"
             ]
             tumor_direct = [
-                "a medical brain scan showing a visible brain tumor or malignant mass",
-                "a brain imaging scan with abnormal mass, tumor growth, or cancerous lesion",
-                "a brain medical image showing pathology, tumor, or abnormal tissue",
-                "a brain scan image with visible tumor, mass, or pathological abnormality"
+                "a medical lung CT or PET scan showing a visible lung tumor or malignant mass",
+                "a lung imaging scan with abnormal mass, tumor growth, or cancerous lesion",
+                "a lung medical image showing pathology, tumor, or abnormal tissue",
+                "a lung scan image with visible tumor, mass, or pathological abnormality"
             ]
             
-            # Strategy 2: Clinical terminology
+            # Strategy 2: Clinical terminology (lung-specific)
             healthy_clinical = [
-                "a brain scan with normal brain parenchyma and no abnormal findings",
-                "a medical brain image showing normal cerebral anatomy without pathology",
-                "a brain scan demonstrating normal brain tissue architecture"
+                "a lung scan with normal lung parenchyma and no abnormal findings",
+                "a medical lung image showing normal pulmonary anatomy without pathology",
+                "a lung scan demonstrating normal lung tissue architecture"
             ]
             tumor_clinical = [
-                "a brain scan with an intracranial mass or neoplasm",
-                "a medical brain image showing an abnormal brain lesion or tumor",
-                "a brain scan demonstrating pathological brain tissue or mass"
+                "a lung scan with an intrapulmonary mass or neoplasm",
+                "a medical lung image showing an abnormal lung lesion or tumor",
+                "a lung scan demonstrating pathological lung tissue or mass"
             ]
             
-            # Strategy 3: Simple, clear descriptions
+            # Strategy 3: Simple, clear descriptions (lung-specific)
             healthy_simple = [
-                "a normal healthy brain scan",
-                "a brain scan with no tumor",
-                "a healthy brain image"
+                "a normal healthy lung scan",
+                "a lung scan with no tumor",
+                "a healthy lung image"
             ]
             tumor_simple = [
-                "a brain scan with a tumor",
-                "a brain scan showing a brain tumor",
-                "an abnormal brain scan with tumor"
+                "a lung scan with a tumor",
+                "a lung scan showing a lung tumor",
+                "an abnormal lung scan with tumor"
             ]
             
             first_prompts = healthy_direct + healthy_clinical + healthy_simple
             second_prompts = tumor_direct + tumor_clinical + tumor_simple
             prompt_weights = [1.0] * len(healthy_direct) + [0.8] * len(healthy_clinical) + [0.6] * len(healthy_simple)
         else:
-            context_hint = "lung cancer" if any(
+            # Detect if this is lung cancer grading (high_grade vs low_grade)
+            is_lung_cancer_grading = any(
                 keyword in first_class.lower() + second_class.lower()
-                for keyword in ["lung", "nsclc", "adenocarcinoma", "squamous"]
-            ) else "medical"
-            first_prompts = [
-                f"a {context_hint} imaging scan showing {first_class} characteristics",
-                f"a clinical radiology image labeled as {first_class}",
-                f"a diagnostic slice that is representative of {first_class}",
-            ]
-            second_prompts = [
-                f"a {context_hint} imaging scan showing {second_class} characteristics",
-                f"a clinical radiology image labeled as {second_class}",
-                f"a diagnostic slice that is representative of {second_class}",
-            ]
+                for keyword in ["high_grade", "low_grade", "grade", "lung", "nsclc", "adenocarcinoma", "squamous"]
+            )
+            
+            if is_lung_cancer_grading:
+                # Lung cancer grade-specific prompts
+                first_prompts = [
+                    f"a lung CT or PET scan showing {first_class} lung cancer characteristics",
+                    f"a lung imaging scan with {first_class} lung cancer features",
+                    f"a lung CT or PET slice classified as {first_class} lung cancer",
+                    f"a lung cancer scan demonstrating {first_class} tumor grade",
+                    f"a lung radiology image with {first_class} lung cancer pathology",
+                ]
+                second_prompts = [
+                    f"a lung CT or PET scan showing {second_class} lung cancer characteristics",
+                    f"a lung imaging scan with {second_class} lung cancer features",
+                    f"a lung CT or PET slice classified as {second_class} lung cancer",
+                    f"a lung cancer scan demonstrating {second_class} tumor grade",
+                    f"a lung radiology image with {second_class} lung cancer pathology",
+                ]
+            else:
+                # Generic medical imaging prompts
+                context_hint = "medical"
+                first_prompts = [
+                    f"a {context_hint} imaging scan showing {first_class} characteristics",
+                    f"a clinical radiology image labeled as {first_class}",
+                    f"a diagnostic slice that is representative of {first_class}",
+                ]
+                second_prompts = [
+                    f"a {context_hint} imaging scan showing {second_class} characteristics",
+                    f"a clinical radiology image labeled as {second_class}",
+                    f"a diagnostic slice that is representative of {second_class}",
+                ]
             prompt_weights = [1.0] * len(first_prompts)
-
+        
         # Create interleaved prompts: [classA1, classB1, classA2, classB2, ...]
         self.class_prompts = [
             prompt for pair in zip(first_prompts, second_prompts)
@@ -298,7 +328,10 @@ class MultimodalModelWrapper:
                     modality_list.append(mod)
         
         if not available_images:
-            raise ValueError("No valid images found")
+            raise ValueError(
+                f"No valid images found. Available modalities: {available_modalities}, "
+                f"Images dict keys: {list(images.keys())}"
+            )
         
         # Preprocess images if requested
         if preprocess:
@@ -368,14 +401,14 @@ class MultimodalModelWrapper:
         
         # BiomedCLIP works better with direct strategy (no swap)
         # For other models, try both and pick best
-        if self.is_biomedclip:
-            # BiomedCLIP: Use direct strategy (no swap) - this worked on 30 samples
+        if self.is_biomedclip or not try_both_swaps:
+            # Use direct strategy (no swap)
             class_logits = torch.stack([healthy_logits_direct, tumor_logits_direct]) / temperature
             probs = class_logits.softmax(dim=-1)
             healthy_logits = healthy_logits_direct
             tumor_logits = tumor_logits_direct
-        elif try_both_swaps:
-            # Other models: Try both strategies and pick the one with higher confidence
+        else:
+            # Try both strategies and pick the one with higher confidence
             # Direct strategy
             class_logits_direct = torch.stack([healthy_logits_direct, tumor_logits_direct]) / temperature
             probs_direct = class_logits_direct.softmax(dim=-1)
@@ -387,20 +420,16 @@ class MultimodalModelWrapper:
             confidence_swap = probs_swap.max().item()
             
             # Use the strategy with higher confidence
-            if confidence_direct > confidence_swap:
-                probs = probs_direct
-                healthy_logits = healthy_logits_direct
-                tumor_logits = tumor_logits_direct
-            else:
+            # IMPORTANT: If confidences are equal (which is expected for binary classification),
+            # prefer the DIRECT strategy. Only swap if swap is STRICTLY more confident.
+            if confidence_swap > confidence_direct:
                 probs = probs_swap
                 healthy_logits = healthy_logits_swap
                 tumor_logits = tumor_logits_swap
-        else:
-            # Use swapped (original behavior for standard CLIP)
-            class_logits = torch.stack([healthy_logits_swap, tumor_logits_swap]) / temperature
-            probs = class_logits.softmax(dim=-1)
-            healthy_logits = healthy_logits_swap
-            tumor_logits = tumor_logits_swap
+            else:
+                probs = probs_direct
+                healthy_logits = healthy_logits_direct
+                tumor_logits = tumor_logits_direct
         
         prediction = probs.argmax().item()
         confidence = probs.max().item()

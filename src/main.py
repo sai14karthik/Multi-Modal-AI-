@@ -14,17 +14,6 @@ _original_stderr = sys.stderr
 class FilteredStderr:
     def __init__(self):
         self._original = _original_stderr
-        self._filter_patterns = [
-            'cadam32bit_grad_fp32',
-            'cadam32bit',
-            'text_config_dict',
-            'CLIPTextConfig',
-            'overriden',
-            'id2label',
-            'bos_token_id',
-            'eos_token_id',
-            'NoneType',
-        ]
     
     def write(self, s):
         if s:
@@ -56,6 +45,7 @@ os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
 
 import argparse
 import random
+import traceback
 
 from src.utils.tf_mock import ensure_tensorflow_stub
 ensure_tensorflow_stub()
@@ -238,8 +228,8 @@ def main():
     
     # Load model
     if args.model_arch == 'llava':
-        from src.models.llava_wrapper import LLaVAModelWrapper
-        model = LLaVAModelWrapper(
+        from src.models.llava_runner import LLaVARunner
+        model = LLaVARunner(
             model_name=args.model_name,
             device=device,
             class_names=args.class_names
@@ -385,7 +375,8 @@ def main():
                 'label': label
             })
         except Exception as e:
-            print(f"Error processing {case_id} with {first_modality}: {e}")
+            print(f"Error processing {case_id} with {first_modality}: {e}", file=sys.stderr)
+            traceback.print_exc()
     
     if second_modality:
         print(f"\n{'='*60}")
@@ -418,8 +409,10 @@ def main():
                     'label': label
                 })
             except Exception as e:
-                print(f"Error processing {case_id} with {second_modality}: {e}")
-        
+                print(f"Error processing {case_id} with {second_modality}: {e}", file=sys.stderr)
+                traceback.print_exc()
+    
+    if second_modality and paired_images:
         print(f"\n{'='*60}")
         print(f"Step 3: {first_modality}+{second_modality} pairs ({len(paired_images)} instances)")
         print(f"{'='*60}")
@@ -462,10 +455,15 @@ def main():
                     'label': label
                 })
             except Exception as e:
-                print(f"Error processing {case_id} with {first_modality}+{second_modality}: {e}")
+                print(f"Error processing {case_id} with {first_modality}+{second_modality}: {e}", file=sys.stderr)
+                traceback.print_exc()
     
     # Evaluate results
     print("\nEvaluating results...")
+    if not results:
+        print("Warning: No results to evaluate. Check if images were processed successfully.", file=sys.stderr)
+        return
+    
     evaluation_results = evaluate_sequential_modalities(results, args.modalities)
     
     # Print results

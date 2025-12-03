@@ -45,16 +45,23 @@ def evaluate_sequential_modalities(
     for case_id, case_results in results.items():
         for result in case_results:
             mods_used = result.get('modalities_used', [])
-            prediction = result['prediction']
-            label = result['label']
+            prediction = result.get('prediction')
+            label = result.get('label')
+            
+            # Skip if required fields are missing
+            if prediction is None or label is None:
+                continue
             
             # Determine step name (explicit step overrides modality inference)
             step_name = result.get('step')
             if step_name is None:
                 if len(mods_used) == 1 and mods_used[0] in step_data:
                     step_name = mods_used[0]
-                elif len(mods_used) == len(modalities):
+                elif len(mods_used) == len(modalities) and len(modalities) > 1:
                     step_name = '+'.join(modalities)
+                else:
+                    # Skip if we can't determine the step
+                    continue
             
             if step_name in step_data:
                 step_data[step_name]['predictions'].append(prediction)
@@ -132,4 +139,3 @@ def save_results(results: Dict, output_path: str):
         json.dump(serializable_results, f, indent=2)
     
     print(f"Results saved to {output_path}")
-

@@ -71,7 +71,7 @@ def get_all_images_by_modality(
     # Ensure labels exist for classes encountered
     class_to_label = {cls: class_mapping.get(cls, idx) for idx, cls in enumerate(classes)}
     all_images = []
-
+    
     metadata_path = resolve_metadata_path(dataset_config, data_root)
     metadata_df = _load_metadata(metadata_path)
     metadata_cfg = dataset_config.get('metadata', {})
@@ -125,9 +125,13 @@ def get_all_images_by_modality(
             # If patient_id not in metadata, try to extract from filename
             if patient_id is None:
                 # Try common patterns: A0001, patient_001, etc.
-                patient_match = re.search(r'([A-Z]?\d{4,})', filename)
-                if patient_match:
-                    patient_id = patient_match.group(1)
+                try:
+                    patient_match = re.search(r'([A-Z]?\d{4,})', filename)
+                    if patient_match:
+                        patient_id = patient_match.group(1)
+                except Exception:
+                    # If regex fails, continue without patient_id
+                    pass
             
             all_images.append({
                 'image_path': img_path,
