@@ -34,62 +34,6 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Basic Usage (Default Model)
-```bash
-python -m src.main \
-    --data_root data \
-    --modalities CT PET \
-    --model_name openai/clip-vit-large-patch14 \
-    --output_dir results \
-    --batch_size 1 \
-    --max_samples 100 \
-    --dataset_config data/dataset_config.yaml \
-    --class_names high_grade low_grade \
-    --split val
-```
-
-### Single-Modality Fallback (CT only)
-If you only have CT prepared, enable the fallback flag:
-
-```bash
-python -m src.main \
-    --data_root data \
-    --modalities CT \
-    --allow_single_modality \
-    --model_name openai/clip-vit-large-patch14 \
-    --output_dir results \
-    --batch_size 1 \
-    --dataset_config data/dataset_config.yaml \
-    --class_names high_grade low_grade
-```
-
-### Using LLaVA (Large Multimodal LLM)
-```bash
-python -m src.main \
-    --data_root data \
-    --modalities CT PET \
-    --model_arch llava \
-    --model_name liuhaotian/llava-v1.6-mistral-7b \
-    --output_dir results \
-    --batch_size 1 \
-    --dataset_config data/dataset_config.yaml \
-    --class_names high_grade low_grade \
-    --split val --max_samples 10
-```
-
-### Use Best Available Model (Recommended)
-```bash
-python -m src.main \
-    --data_root data \
-    --modalities CT PET \
-    --model_name laion/CLIP-ViT-H-14-laion2B-s32B-b79K \
-    --output_dir results \
-    --batch_size 1 \
-    --dataset_config data/dataset_config.yaml \
-    --class_names high_grade low_grade \
-    --split test
-```
-
 ### Use Medical-Specific Model
 ```bash
 python -m src.main \

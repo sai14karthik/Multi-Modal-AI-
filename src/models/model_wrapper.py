@@ -30,13 +30,15 @@ class MultimodalModelWrapper:
     ):
         """
         Args:
-            model_name: HuggingFace model name for CLIP. Recommended models:
+            model_name: HuggingFace model name for CLIP. Verified working models:
                 - "openai/clip-vit-large-patch14" (default, good balance)
                 - "openai/clip-vit-base-patch32" (faster, smaller)
+                - "openai/clip-vit-large-patch14-336" (higher resolution, 336px)
                 - "laion/CLIP-ViT-H-14-laion2B-s32B-b79K" (larger, better performance)
-                - "laion/CLIP-ViT-B-32-xlm-roberta-base-laion5B-s13B-b90k" (multilingual)
-                - "microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224" (medical-specific, if available)
+                - "microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224" (medical-specific)
             device: Device to run on ('cuda' or 'cpu')
+            
+        Note: ResNet-based CLIP models (rn50, rn101) are NOT available on Hugging Face.
         """
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_name = model_name
@@ -123,20 +125,32 @@ class MultimodalModelWrapper:
                         self.processor = CLIPProcessor.from_pretrained(self.model_name)
             elif "laion" in model_name.lower():
                 # LAION CLIP models might need different loading
+                loaded = False
                 try:
                     with suppress_stderr():
                         self.model = CLIPModel.from_pretrained(model_name).to(self.device)
                         self.processor = CLIPProcessor.from_pretrained(model_name)
+                    loaded = True
                 except Exception as e:
-                    print(f"Warning: Could not load {model_name} as CLIPModel, trying AutoModel...")
+                    error_msg = str(e)
+                    print(f"Warning: Could not load {model_name} as CLIPModel: {error_msg[:200]}")
+                    print(f"Trying AutoModel as fallback...")
                     try:
                         from transformers import AutoModel, AutoProcessor
                         with suppress_stderr():
                             self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
                             self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+                        loaded = True
+                        print(f"✅ Successfully loaded {model_name} using AutoModel")
                     except Exception as e2:
-                        print(f"Error loading {model_name}: {e2}")
-                        raise
+                        error_msg2 = str(e2)
+                        print(f"Warning: AutoModel also failed: {error_msg2[:200]}")
+                        # Will fall back to default model in outer exception handler
+                        pass
+                
+                if not loaded:
+                    # Raise to trigger fallback in outer exception handler
+                    raise RuntimeError(f"Could not load {model_name} with any method. The model may not exist or may require special configuration.")
             else:
                 with suppress_stderr():
                     self.model = CLIPModel.from_pretrained(model_name).to(self.device)
@@ -222,20 +236,55 @@ class MultimodalModelWrapper:
             )
             
             if is_lung_cancer_grading:
-                # Lung cancer grade-specific prompts
-                first_prompts = [
-                    f"a lung CT or PET scan showing {first_class} lung cancer characteristics",
-                    f"a lung imaging scan with {first_class} lung cancer features",
-                    f"a lung CT or PET slice classified as {first_class} lung cancer",
-                    f"a lung cancer scan demonstrating {first_class} tumor grade",
-                    f"a lung radiology image with {first_class} lung cancer pathology",
-                ]
-                second_prompts = [
-                    f"a lung CT or PET scan showing {second_class} lung cancer characteristics",
-                    f"a lung imaging scan with {second_class} lung cancer features",
-                    f"a lung CT or PET slice classified as {second_class} lung cancer",
-                    f"a lung cancer scan demonstrating {second_class} tumor grade",
-                    f"a lung radiology image with {second_class} lung cancer pathology",
+                # Enhanced lung cancer grade-specific prompts with medical terminology
+                # High-grade typically: larger tumors, more aggressive, poor differentiation, invasion
+                # Low-grade typically: smaller tumors, less aggressive, well-differentiated, localized
+                is_high_grade_first = "high" in first_class.lower()
+                
+                if is_high_grade_first:
+                    # High-grade prompts (more aggressive, invasive characteristics)
+                    first_prompts = [
+                        f"a lung CT or PET scan showing {first_class} lung cancer with aggressive tumor characteristics",
+                        f"a lung imaging scan with {first_class} lung cancer demonstrating large tumor size and invasion",
+                        f"a lung CT or PET slice classified as {first_class} with poor differentiation and advanced stage",
+                        f"a lung cancer scan showing {first_class} tumor with high metabolic activity and spread",
+                        f"a lung radiology image with {first_class} lung cancer pathology showing invasive growth pattern",
+                        f"a lung scan with {first_class} lung cancer exhibiting high-grade features: large mass, irregular borders, and aggressive appearance",
+                        f"a medical lung image showing {first_class} lung cancer with advanced disease characteristics",
+                        f"a lung CT or PET scan demonstrating {first_class} lung cancer with extensive tumor involvement",
+                    ]
+                    # Low-grade prompts (less aggressive, localized characteristics)
+                    second_prompts = [
+                        f"a lung CT or PET scan showing {second_class} lung cancer with less aggressive tumor characteristics",
+                        f"a lung imaging scan with {second_class} lung cancer demonstrating smaller tumor size and localized growth",
+                        f"a lung CT or PET slice classified as {second_class} with well-differentiated and early stage features",
+                        f"a lung cancer scan showing {second_class} tumor with lower metabolic activity and contained growth",
+                        f"a lung radiology image with {second_class} lung cancer pathology showing localized growth pattern",
+                        f"a lung scan with {second_class} lung cancer exhibiting low-grade features: smaller mass, well-defined borders, and less aggressive appearance",
+                        f"a medical lung image showing {second_class} lung cancer with early-stage disease characteristics",
+                        f"a lung CT or PET scan demonstrating {second_class} lung cancer with limited tumor involvement",
+                    ]
+                else:
+                    # Low-grade first, high-grade second (swap the descriptions)
+                    first_prompts = [
+                        f"a lung CT or PET scan showing {first_class} lung cancer with less aggressive tumor characteristics",
+                        f"a lung imaging scan with {first_class} lung cancer demonstrating smaller tumor size and localized growth",
+                        f"a lung CT or PET slice classified as {first_class} with well-differentiated and early stage features",
+                        f"a lung cancer scan showing {first_class} tumor with lower metabolic activity and contained growth",
+                        f"a lung radiology image with {first_class} lung cancer pathology showing localized growth pattern",
+                        f"a lung scan with {first_class} lung cancer exhibiting low-grade features: smaller mass, well-defined borders, and less aggressive appearance",
+                        f"a medical lung image showing {first_class} lung cancer with early-stage disease characteristics",
+                        f"a lung CT or PET scan demonstrating {first_class} lung cancer with limited tumor involvement",
+                    ]
+                    second_prompts = [
+                        f"a lung CT or PET scan showing {second_class} lung cancer with aggressive tumor characteristics",
+                        f"a lung imaging scan with {second_class} lung cancer demonstrating large tumor size and invasion",
+                        f"a lung CT or PET slice classified as {second_class} with poor differentiation and advanced stage",
+                        f"a lung cancer scan showing {second_class} tumor with high metabolic activity and spread",
+                        f"a lung radiology image with {second_class} lung cancer pathology showing invasive growth pattern",
+                        f"a lung scan with {second_class} lung cancer exhibiting high-grade features: large mass, irregular borders, and aggressive appearance",
+                        f"a medical lung image showing {second_class} lung cancer with advanced disease characteristics",
+                        f"a lung CT or PET scan demonstrating {second_class} lung cancer with extensive tumor involvement",
                 ]
             else:
                 # Generic medical imaging prompts
@@ -250,7 +299,12 @@ class MultimodalModelWrapper:
                     f"a clinical radiology image labeled as {second_class}",
                     f"a diagnostic slice that is representative of {second_class}",
                 ]
-            prompt_weights = [1.0] * len(first_prompts)
+            # Weight prompts: more specific medical terminology gets higher weight
+            if is_lung_cancer_grading:
+                # Higher weight for prompts with specific medical terms (aggressive, invasion, differentiation, etc.)
+                prompt_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.0, 1.0]  # 6th prompt has more detail
+            else:
+                prompt_weights = [1.0] * len(first_prompts)
         
         # Create interleaved prompts: [classA1, classB1, classA2, classB2, ...]
         self.class_prompts = [
@@ -260,34 +314,58 @@ class MultimodalModelWrapper:
         # Interleave weights to match prompt order
         self.weights = [w for pair in zip(prompt_weights, prompt_weights) for w in pair]
     
-    def _preprocess_medical_image(self, image: Image.Image) -> Image.Image:
+    def _preprocess_medical_image(self, image: Image.Image, aggressive: bool = False) -> Image.Image:
         """
         Preprocess medical image for better CLIP performance.
         Enhances contrast and normalizes the image.
+        
+        Args:
+            image: PIL Image to preprocess
+            aggressive: If True, apply more aggressive preprocessing (default: False)
         """
         # Convert to grayscale if needed, then back to RGB
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        # Enhance contrast for medical images
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.3)  # Increase contrast by 30%
-        
-        # Enhance sharpness slightly
-        enhancer = ImageEnhance.Sharpness(image)
-        image = enhancer.enhance(1.1)
-        
-        # Apply histogram equalization for better visibility
-        # Convert to grayscale for histogram equalization
-        gray = np.array(image.convert('L'))
-        # Apply histogram equalization
-        equalized = ImageOps.equalize(Image.fromarray(gray))
-        # Convert back to RGB
-        equalized_rgb = Image.new('RGB', equalized.size)
-        equalized_rgb.paste(equalized)
-        
-        # Blend original (70%) with equalized (30%) to preserve natural look
-        image = Image.blend(image, equalized_rgb, 0.3)
+        if aggressive:
+            # More aggressive preprocessing for challenging cases
+            # Enhance contrast more strongly
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.5)  # Increase contrast by 50%
+            
+            # Enhance sharpness more
+            enhancer = ImageEnhance.Sharpness(image)
+            image = enhancer.enhance(1.2)
+            
+            # Apply CLAHE-like effect with histogram equalization
+            gray = np.array(image.convert('L'))
+            equalized = ImageOps.equalize(Image.fromarray(gray))
+            equalized_rgb = Image.new('RGB', equalized.size)
+            equalized_rgb.paste(equalized)
+            
+            # Blend original (60%) with equalized (40%) for stronger enhancement
+            image = Image.blend(image, equalized_rgb, 0.4)
+        else:
+            # Standard preprocessing (balanced)
+            # Enhance contrast for medical images
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.3)  # Increase contrast by 30%
+            
+            # Enhance sharpness slightly
+            enhancer = ImageEnhance.Sharpness(image)
+            image = enhancer.enhance(1.1)
+            
+            # Apply histogram equalization for better visibility
+            # Convert to grayscale for histogram equalization
+            gray = np.array(image.convert('L'))
+            # Apply histogram equalization
+            equalized = ImageOps.equalize(Image.fromarray(gray))
+            # Convert back to RGB
+            equalized_rgb = Image.new('RGB', equalized.size)
+            equalized_rgb.paste(equalized)
+            
+            # Blend original (70%) with equalized (30%) to preserve natural look
+            image = Image.blend(image, equalized_rgb, 0.3)
         
         return image
     
@@ -297,9 +375,10 @@ class MultimodalModelWrapper:
         available_modalities: List[str],
         batch_size: int = 1,
         preprocess: bool = False,
-        temperature: float = 1.0,
+        temperature: float = 0.8,  # Lower default for better calibration (was 1.0)
         use_weighted_ensemble: bool = True,
-        try_both_swaps: bool = True
+        try_both_swaps: bool = True,
+        aggressive_preprocess: bool = False
     ) -> Dict:
         """
         Predict class using zero-shot classification with enhanced strategies.
@@ -335,7 +414,7 @@ class MultimodalModelWrapper:
         
         # Preprocess images if requested
         if preprocess:
-            available_images = [self._preprocess_medical_image(img) for img in available_images]
+            available_images = [self._preprocess_medical_image(img, aggressive=aggressive_preprocess) for img in available_images]
         
         all_healthy_logits_weighted = []
         all_tumor_logits_weighted = []
@@ -372,8 +451,11 @@ class MultimodalModelWrapper:
                         # Weighted average based on prompt quality
                         healthy_weights = torch.tensor(self.weights[::2], device=healthy_logits_all.device)
                         tumor_weights = torch.tensor(self.weights[1::2], device=tumor_logits_all.device)
-                        healthy_prompt_logits = (healthy_logits_all * healthy_weights).sum() / healthy_weights.sum()
-                        tumor_prompt_logits = (tumor_logits_all * tumor_weights).sum() / tumor_weights.sum()
+                        # Protect against division by zero (weights should always be positive, but safety check)
+                        healthy_weights_sum = healthy_weights.sum()
+                        tumor_weights_sum = tumor_weights.sum()
+                        healthy_prompt_logits = (healthy_logits_all * healthy_weights).sum() / max(healthy_weights_sum, 1e-8)
+                        tumor_prompt_logits = (tumor_logits_all * tumor_weights).sum() / max(tumor_weights_sum, 1e-8)
                     else:
                         # Simple mean
                         healthy_prompt_logits = healthy_logits_all.mean()
@@ -388,7 +470,9 @@ class MultimodalModelWrapper:
                     all_tumor_logits_swapped.append(healthy_prompt_logits)
         
         # Aggregate across images
-        if len(all_healthy_logits_weighted) == 1:
+        if len(all_healthy_logits_weighted) == 0:
+            raise ValueError("No logits computed. Check that images were processed correctly.")
+        elif len(all_healthy_logits_weighted) == 1:
             healthy_logits_direct = all_healthy_logits_weighted[0]
             tumor_logits_direct = all_tumor_logits_weighted[0]
             healthy_logits_swap = all_healthy_logits_swapped[0]
@@ -403,19 +487,23 @@ class MultimodalModelWrapper:
         # For other models, try both and pick best
         if self.is_biomedclip or not try_both_swaps:
             # Use direct strategy (no swap)
-            class_logits = torch.stack([healthy_logits_direct, tumor_logits_direct]) / temperature
+            # Protect against division by zero
+            safe_temperature = max(temperature, 1e-8)
+            class_logits = torch.stack([healthy_logits_direct, tumor_logits_direct]) / safe_temperature
             probs = class_logits.softmax(dim=-1)
             healthy_logits = healthy_logits_direct
             tumor_logits = tumor_logits_direct
         else:
             # Try both strategies and pick the one with higher confidence
             # Direct strategy
-            class_logits_direct = torch.stack([healthy_logits_direct, tumor_logits_direct]) / temperature
+            # Protect against division by zero
+            safe_temperature = max(temperature, 1e-8)
+            class_logits_direct = torch.stack([healthy_logits_direct, tumor_logits_direct]) / safe_temperature
             probs_direct = class_logits_direct.softmax(dim=-1)
             confidence_direct = probs_direct.max().item()
             
             # Swapped strategy
-            class_logits_swap = torch.stack([healthy_logits_swap, tumor_logits_swap]) / temperature
+            class_logits_swap = torch.stack([healthy_logits_swap, tumor_logits_swap]) / safe_temperature
             probs_swap = class_logits_swap.softmax(dim=-1)
             confidence_swap = probs_swap.max().item()
             

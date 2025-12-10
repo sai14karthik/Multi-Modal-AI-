@@ -72,14 +72,26 @@ def evaluate_sequential_modalities(
     for step_name, data in step_data.items():
         if len(data['predictions']) > 0:
             acc = calculate_accuracy(data['predictions'], data['labels'])
+            num_predictions = len(data['predictions'])
+            
+            # For multimodal cases (e.g., "CT+PET"), count total images (pairs × modalities)
+            # This matches what's displayed in the console output
+            if '+' in step_name and len(modalities) > 1:
+                # Each pair contains one image from each modality
+                num_samples = num_predictions * len(modalities)
+            else:
+                num_samples = num_predictions
+            
             step_accuracies[step_name] = {
                 'accuracy': acc,
-                'num_samples': len(data['predictions'])
+                'num_samples': num_samples,
+                'num_pairs': num_predictions if '+' in step_name else None  # Store pairs count for reference
             }
         else:
             step_accuracies[step_name] = {
                 'accuracy': 0.0,
-                'num_samples': 0
+                'num_samples': 0,
+                'num_pairs': None
             }
     
     return {
@@ -104,13 +116,8 @@ def print_evaluation_results(evaluation_results: Dict):
         acc = step_accuracies[step_name]['accuracy']
         num_samples = step_accuracies[step_name]['num_samples']
         
-        # For multimodal cases (e.g., "CT+PET"), show total images (pairs × modalities)
-        if '+' in step_name and len(modalities) > 1:
-            # Each pair contains one image from each modality
-            total_images = num_samples * len(modalities)
-            print(f"{step_name:<20} {acc:<15.4f} {total_images:<10}")
-        else:
-            print(f"{step_name:<20} {acc:<15.4f} {num_samples:<10}")
+        # num_samples already includes total images for multimodal cases (fixed in evaluate_sequential_modalities)
+        print(f"{step_name:<20} {acc:<15.4f} {num_samples:<10}")
     
     print("="*60 + "\n")
 

@@ -142,8 +142,13 @@ def main():
     parser.add_argument(
         '--temperature',
         type=float,
-        default=1.0,
-        help='Temperature scaling for logits (default: 1.0, lower = more confident predictions)'
+        default=0.8,
+        help='Temperature scaling for logits (default: 0.8, lower = more confident predictions). Recommended: 0.7-0.9 for better calibration'
+    )
+    parser.add_argument(
+        '--aggressive_preprocess',
+        action='store_true',
+        help='Use aggressive preprocessing (stronger contrast/sharpness enhancement). May improve difficult cases but can introduce artifacts'
     )
     parser.add_argument(
         '--no_weighted_ensemble',
@@ -366,7 +371,8 @@ def main():
                 preprocess=not args.no_preprocess,
                 temperature=args.temperature,
                 use_weighted_ensemble=not args.no_weighted_ensemble,
-                try_both_swaps=not args.no_swap_test
+                try_both_swaps=not args.no_swap_test,
+                aggressive_preprocess=args.aggressive_preprocess
             )
             results[case_id].append({
                 'modalities_used': [first_modality],
@@ -400,7 +406,8 @@ def main():
                     preprocess=not args.no_preprocess,
                     temperature=args.temperature,
                     use_weighted_ensemble=not args.no_weighted_ensemble,
-                    try_both_swaps=not args.no_swap_test
+                    try_both_swaps=not args.no_swap_test,
+                    aggressive_preprocess=args.aggressive_preprocess
                 )
                 results[case_id].append({
                     'modalities_used': [second_modality],
@@ -445,7 +452,8 @@ def main():
                     preprocess=not args.no_preprocess,
                     temperature=args.temperature,
                     use_weighted_ensemble=not args.no_weighted_ensemble,
-                    try_both_swaps=not args.no_swap_test
+                    try_both_swaps=not args.no_swap_test,
+                    aggressive_preprocess=args.aggressive_preprocess
                 )
                 results[case_id].append({
                     'modalities_used': [first_modality, second_modality],
