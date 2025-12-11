@@ -85,11 +85,15 @@ def get_all_images_by_modality(
         if split:
             df = df[df[split_column] == split]
         filtered_paths = set(df[image_column].tolist())
-        # Create fast lookup dictionary: image_path -> patient_id
+        # Create fast lookup dictionary: image_path -> {patient_id, slice_index, series_uid, ...}
         for _, row in df.iterrows():
             img_path = row.get(image_column)
             if img_path:
-                metadata_lookup[img_path] = row.get('patient_id', None)
+                metadata_lookup[img_path] = {
+                    'patient_id': row.get('patient_id', None),
+                    'slice_index': row.get('slice_index', None),
+                    'series_uid': row.get('series_uid', None)
+                }
     
     folder_root = os.path.join(data_root, folder_name)
     existing_dirs = {}
@@ -117,10 +121,21 @@ def get_all_images_by_modality(
             if filtered_paths is not None and rel_path not in filtered_paths:
                 continue
 
-            # Extract patient_id from metadata if available (optimized lookup)
+            # Extract metadata if available (optimized lookup)
             patient_id = None
+            slice_index = None
+            series_uid = None
+            
             if metadata_lookup:
-                patient_id = metadata_lookup.get(rel_path, None)
+                metadata_entry = metadata_lookup.get(rel_path)
+                if metadata_entry:
+                    if isinstance(metadata_entry, dict):
+                        patient_id = metadata_entry.get('patient_id')
+                        slice_index = metadata_entry.get('slice_index')
+                        series_uid = metadata_entry.get('series_uid')
+                    else:
+                        # Backward compatibility: if it's just patient_id
+                        patient_id = metadata_entry
             
             # If patient_id not in metadata, try to extract from filename
             if patient_id is None:
@@ -133,13 +148,22 @@ def get_all_images_by_modality(
                     # If regex fails, continue without patient_id
                     pass
             
+            # Convert slice_index to int if it's a valid number
+            if slice_index is not None:
+                try:
+                    slice_index = int(float(slice_index))  # Handle both int and float strings
+                except (ValueError, TypeError):
+                    slice_index = None
+            
             all_images.append({
                 'image_path': img_path,
                 'class': class_name,
                 'label': class_to_label.get(class_name, -1),
                 'image_id': img_number,
                 'modality': modality,
-                'patient_id': patient_id
+                'patient_id': patient_id,
+                'slice_index': slice_index,
+                'series_uid': series_uid
             })
     
     return all_images

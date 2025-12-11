@@ -1,3 +1,4 @@
+
 """
 Thin wrapper around the official LLaVA-Med repo to run inference from this project.
 

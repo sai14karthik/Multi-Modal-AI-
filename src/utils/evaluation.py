@@ -1,6 +1,6 @@
 """
 Evaluation utilities for sequential modality feeding.
-Calculates accuracy for CT, MRI, and CT+MRI.
+Calculates accuracy for CT and PET (with CT context).
 """
 
 import numpy as np
@@ -40,7 +40,7 @@ def evaluate_sequential_modalities(
     }
     if len(modalities) > 1:
         step_data[modalities[1]] = {'predictions': [], 'labels': []}
-        step_data['+'.join(modalities)] = {'predictions': [], 'labels': []}
+        # Note: Removed CT+PET multimodal step - only CT and PET (with CT context) are evaluated
     
     for case_id, case_results in results.items():
         for result in case_results:
@@ -57,8 +57,6 @@ def evaluate_sequential_modalities(
             if step_name is None:
                 if len(mods_used) == 1 and mods_used[0] in step_data:
                     step_name = mods_used[0]
-                elif len(mods_used) == len(modalities) and len(modalities) > 1:
-                    step_name = '+'.join(modalities)
                 else:
                     # Skip if we can't determine the step
                     continue
@@ -73,25 +71,16 @@ def evaluate_sequential_modalities(
         if len(data['predictions']) > 0:
             acc = calculate_accuracy(data['predictions'], data['labels'])
             num_predictions = len(data['predictions'])
-            
-            # For multimodal cases (e.g., "CT+PET"), count total images (pairs × modalities)
-            # This matches what's displayed in the console output
-            if '+' in step_name and len(modalities) > 1:
-                # Each pair contains one image from each modality
-                num_samples = num_predictions * len(modalities)
-            else:
-                num_samples = num_predictions
+            num_samples = num_predictions
             
             step_accuracies[step_name] = {
                 'accuracy': acc,
-                'num_samples': num_samples,
-                'num_pairs': num_predictions if '+' in step_name else None  # Store pairs count for reference
+                'num_samples': num_samples
             }
         else:
             step_accuracies[step_name] = {
                 'accuracy': 0.0,
-                'num_samples': 0,
-                'num_pairs': None
+                'num_samples': 0
             }
     
     return {
@@ -116,7 +105,6 @@ def print_evaluation_results(evaluation_results: Dict):
         acc = step_accuracies[step_name]['accuracy']
         num_samples = step_accuracies[step_name]['num_samples']
         
-        # num_samples already includes total images for multimodal cases (fixed in evaluate_sequential_modalities)
         print(f"{step_name:<20} {acc:<15.4f} {num_samples:<10}")
     
     print("="*60 + "\n")
