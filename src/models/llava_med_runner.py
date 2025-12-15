@@ -145,6 +145,9 @@ class LLaVAMedRunner:
         else:
             prediction = 0 if "high" in output_text else 1
 
+        # Ensure prediction is valid (0 or 1)
+        prediction = max(0, min(1, int(prediction)))
+
         probs = {first: 0.0, second: 0.0}
         probs[self.class_names[prediction].lower()] = 1.0
 

@@ -19,6 +19,65 @@ def calculate_accuracy(
     return correct / len(predictions) if len(predictions) > 0 else 0.0
 
 
+def aggregate_patient_predictions(patient_slices: List[Dict]) -> Dict:
+    """
+    Aggregate predictions from multiple slices per patient.
+    
+    Strategy: Weighted voting by confidence
+    - Each slice's prediction is weighted by its confidence
+    - Final prediction is the class with highest weighted sum
+    - Tie-breaking: Use class with higher average confidence
+    
+    Args:
+        patient_slices: List of prediction dicts, each with 'prediction' and 'confidence'
+    
+    Returns:
+        Dictionary with aggregated 'prediction', 'confidence', and 'num_slices'
+    """
+    if not patient_slices:
+        return {'prediction': 0, 'confidence': 0.0, 'num_slices': 0}
+    
+    # Weighted voting: sum confidence for each class
+    class_weights = {0: 0.0, 1: 0.0}
+    class_confidences = {0: [], 1: []}  # Track individual confidences for tie-breaking
+    total_confidence = 0.0
+    
+    for slice_pred in patient_slices:
+        # Validate prediction is 0 or 1
+        pred = slice_pred.get('prediction', 0)
+        pred = max(0, min(1, int(pred)))  # Clamp to valid range [0, 1]
+        
+        # Validate confidence is in valid range [0, 1]
+        conf = slice_pred.get('confidence', 0.5)
+        conf = max(0.0, min(1.0, float(conf)))  # Clamp to valid range
+        
+        class_weights[pred] += conf
+        class_confidences[pred].append(conf)
+        total_confidence += conf
+    
+    # Get prediction with highest weighted sum
+    # Handle tie-breaking: if weights are equal, use class with higher average confidence
+    if class_weights[0] == class_weights[1]:
+        # Tie-breaking: compare average confidence
+        avg_conf_0 = sum(class_confidences[0]) / len(class_confidences[0]) if class_confidences[0] else 0.0
+        avg_conf_1 = sum(class_confidences[1]) / len(class_confidences[1]) if class_confidences[1] else 0.0
+        aggregated_pred = 1 if avg_conf_1 > avg_conf_0 else 0
+    else:
+        aggregated_pred = max(class_weights.items(), key=lambda x: x[1])[0]
+    
+    # Calculate aggregated confidence (normalized)
+    if total_confidence > 0:
+        aggregated_conf = class_weights[aggregated_pred] / total_confidence
+    else:
+        aggregated_conf = 0.5
+    
+    return {
+        'prediction': aggregated_pred,
+        'confidence': aggregated_conf,
+        'num_slices': len(patient_slices)
+    }
+
+
 def evaluate_sequential_modalities(
     results: Dict[str, List[Dict]],
     modalities: List[str]
