@@ -74,6 +74,18 @@ from PIL import Image
 import torch
 from tqdm import tqdm
 
+# Configure tqdm for better display in log files (Slurm jobs)
+# Use file=sys.stderr for better compatibility with Slurm log files
+import os
+is_slurm = os.environ.get('SLURM_JOB_ID') is not None
+tqdm_kwargs = {
+    'file': sys.stderr if is_slurm else sys.stdout,  # stderr more reliable for Slurm
+    'ncols': 120,  # Fixed width for better log file display
+    'mininterval': 0.5,  # Update at least every 0.5 seconds
+    'miniters': 1,  # Update on every iteration (for file output)
+    'disable': False  # Always show progress bars
+}
+
 from src.data.config import load_dataset_config
 from src.data.dataloader import get_all_images_by_modality
 from src.models.model_wrapper import MultimodalModelWrapper
@@ -437,7 +449,15 @@ def main():
     print(f"Step 1: {first_modality} ({len(first_mod_images)} instances)")
     print(f"{'='*60}")
     
-    for img_info in tqdm(first_mod_images, desc=f"Processing {first_modality}"):
+    # Add periodic status prints for better visibility in log files
+    total_images = len(first_mod_images)
+    print_interval = max(100, total_images // 20)  # Print every 5% or every 100 images
+    
+    for idx, img_info in enumerate(tqdm(first_mod_images, desc=f"Processing {first_modality}", **tqdm_kwargs), 1):
+        # Print progress every N images
+        if idx % print_interval == 0 or idx == total_images:
+            progress_pct = (idx / total_images) * 100
+            print(f"[Progress] Processed {idx}/{total_images} {first_modality} images ({progress_pct:.1f}%)", file=sys.stderr, flush=True)
         case_id = f"{img_info['class'].lower()}_{img_info['image_id']}_{first_modality}"
         label = img_info['label']
         patient_id = extract_patient_id_from_img(img_info)
@@ -587,7 +607,14 @@ def main():
         patient_pet_predictions_list = {}
         
         context_used_count = 0
-        for img_info in tqdm(filtered_second_mod_images, desc=f"Processing {second_modality} with {first_modality} context"):
+        total_pet_images = len(filtered_second_mod_images)
+        pet_print_interval = max(100, total_pet_images // 20)  # Print every 5% or every 100 images
+        
+        for idx, img_info in enumerate(tqdm(filtered_second_mod_images, desc=f"Processing {second_modality} with {first_modality} context", **tqdm_kwargs), 1):
+            # Print progress every N images
+            if idx % pet_print_interval == 0 or idx == total_pet_images:
+                progress_pct = (idx / total_pet_images) * 100
+                print(f"[Progress] Processed {idx}/{total_pet_images} {second_modality} images ({progress_pct:.1f}%)", file=sys.stderr, flush=True)
             case_id = f"{img_info['class'].lower()}_{img_info['image_id']}_{second_modality}"
             label = img_info['label']
             patient_id = extract_patient_id_from_img(img_info)  # Use same extraction as Step 1

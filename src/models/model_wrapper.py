@@ -650,16 +650,16 @@ class MultimodalModelWrapper:
                 # Case 1: PET agrees with CT - boost significantly to lock it in
                 # Both modalities agree, so this is very likely correct
                 # The prompts already incorporate CT context, and PET agrees with CT
-                # Use more reasonable boost factor (20-50x instead of 10000x)
+                # Increased boost factors to ensure agreement cases are strongly favored
                 if pet_confidence_before > 0.7 and ct_confidence > 0.7:
-                    # Both highly confident - strong boost
-                    boost_factor = 50.0
+                    # Both highly confident - very strong boost
+                    boost_factor = 80.0  # Increased from 50.0
                 elif pet_confidence_before > 0.6 or ct_confidence > 0.6:
-                    # At least one confident - moderate boost
-                    boost_factor = 30.0
+                    # At least one confident - strong boost
+                    boost_factor = 50.0  # Increased from 30.0
                 else:
-                    # Lower confidence - lighter boost
-                    boost_factor = 20.0
+                    # Lower confidence - moderate boost
+                    boost_factor = 35.0  # Increased from 20.0
                 probs[pet_prediction_before] = probs[pet_prediction_before] * boost_factor
             else:
                 # Case 2: PET disagrees with CT - PROFESSOR'S REQUIREMENT
@@ -671,28 +671,35 @@ class MultimodalModelWrapper:
                 #   - CT's prediction as context (in prompts)
                 # Therefore, PET's informed judgment should be trusted MORE
                 # 
-                # Strategy: Trust PET's informed judgment to enable improvement
+                # Strategy: Trust PET's informed judgment MORE to enable improvement
                 # When PET disagrees after seeing CT context, PET might be seeing something CT missed
                 # This is where improvement happens - PET can correct CT's mistakes
+                # 
+                # IMPROVEMENT: Don't boost CT when PET disagrees - trust PET's informed decision
+                # PET has already seen CT context in prompts, so if PET still disagrees, trust PET
+                
+                # CRITICAL FIX: When PET disagrees with CT, ONLY boost PET, NOT CT
+                # PET has more information (PET image + CT context in prompts)
+                # If PET still disagrees after seeing CT context, trust PET's informed decision
+                # Boosting CT would work against improvement!
                 
                 if pet_confidence_before > 0.65:
-                    # PET is confident - trust PET MORE (PET has more information!)
+                    # PET is confident - trust PET STRONGLY (PET has more information!)
                     # This allows PET to correct CT and improve accuracy
-                    pet_boost_factor = 5.0   # 500% boost to confident PET (strong)
-                    ct_boost_factor = 2.0   # 200% boost to CT (moderate)
+                    pet_boost_factor = 10.0  # Increased from 8.0 - even stronger trust
+                    # DO NOT boost CT - let PET's informed decision win
                 elif pet_confidence_before > 0.55:
-                    # PET is moderately confident - favor PET slightly
-                    pet_boost_factor = 3.5   # 350% boost to PET
-                    ct_boost_factor = 2.5    # 250% boost to CT
+                    # PET is moderately confident - favor PET strongly
+                    pet_boost_factor = 7.0   # Increased from 5.0
+                    # DO NOT boost CT
                 else:
-                    # PET is not confident - balanced, but still favor PET slightly
-                    # (because PET has more information: PET image + CT context)
-                    pet_boost_factor = 2.5   # 250% boost to PET
-                    ct_boost_factor = 3.0    # 300% boost to CT (slightly more)
+                    # PET is not confident - still favor PET (it has more information)
+                    pet_boost_factor = 5.0   # Increased from 3.5
+                    # DO NOT boost CT - trust PET's informed judgment
                 
-                # Apply boosts
-                probs[ct_class_idx] = probs[ct_class_idx] * ct_boost_factor
+                # Apply boost ONLY to PET (not CT)
                 probs[pet_class_idx] = probs[pet_class_idx] * pet_boost_factor
+                # Do NOT boost CT when PET disagrees - this is key to improvement!
             
             # Renormalize probabilities after boosting
             probs = probs / probs.sum()
