@@ -46,9 +46,11 @@ checkpoints/
 # data/
 !data/dataset_config.yaml
 !data/.gitkeep
+data/Lung-PET-CT-Dx/
 
 # Results and outputs
 results/
+result/
 outputs/
 logs/
 *.log
