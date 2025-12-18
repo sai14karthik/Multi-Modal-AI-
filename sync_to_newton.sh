@@ -18,12 +18,24 @@ rsync -avz --progress \
   --exclude '*.log' \
   --exclude '.pytest_cache/' \
   --exclude '.cache/' \
+  --exclude '.env' \
+  --exclude '.env.local' \
+  --exclude 'main.py' \
+  --exclude 'models/' \
+  --exclude 'utils/' \
   src/ \
   requirements.txt \
   README.md \
   run.sh \
-  *.py \
+  test_models.py \
+  test_performance.py \
+  quick_test_models.py \
   data/dataset_config.yaml \
+  .env.example \
+  submit_top5_models.sh \
+  submit_llava_med.sh \
+  test_quick.sh \
+  third_party/llava-med/llava/model/builder.py \
   sa808371@newton.ist.ucf.edu:~/Multi-Modal-AI/
 
 echo ""

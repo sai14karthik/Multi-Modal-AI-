@@ -45,6 +45,22 @@ os.environ.setdefault('BITSANDBYTES_NOWELCOME', '1')
 os.environ.setdefault('TRANSFORMERS_NO_ADVISORY_WARNINGS', '1')
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
 
+# Load .env file if it exists (for HF_TOKEN and other secrets)
+try:
+    from dotenv import load_dotenv
+    # Load .env from project root
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        if os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN'):
+            print("✅ Loaded Hugging Face token from .env file")
+except ImportError:
+    # python-dotenv not installed, skip .env loading
+    pass
+except Exception as e:
+    # Silently fail if .env loading has issues
+    pass
+
 import argparse
 import random
 import re
@@ -76,7 +92,6 @@ from tqdm import tqdm
 
 # Configure tqdm for better display in log files (Slurm jobs)
 # Use file=sys.stderr for better compatibility with Slurm log files
-import os
 is_slurm = os.environ.get('SLURM_JOB_ID') is not None
 tqdm_kwargs = {
     'file': sys.stderr if is_slurm else sys.stdout,  # stderr more reliable for Slurm
@@ -189,6 +204,12 @@ def main():
         help='Optional split name (e.g., train/val/test) to filter images using metadata'
     )
     parser.add_argument(
+        '--hf_token',
+        type=str,
+        default=None,
+        help='Hugging Face token for accessing private models. Can also be set via HF_TOKEN or HUGGING_FACE_HUB_TOKEN environment variable'
+    )
+    parser.add_argument(
         '--class_names',
         type=str,
         nargs='+',
@@ -242,6 +263,17 @@ def main():
     device = args.device or ('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
+    # Handle Hugging Face token
+    hf_token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN')
+    if hf_token:
+        # Set environment variable for huggingface_hub to pick up
+        os.environ['HF_TOKEN'] = hf_token
+        os.environ['HUGGING_FACE_HUB_TOKEN'] = hf_token
+        print("✅ Hugging Face token configured for private model access")
+    else:
+        # Check if token is needed (user might have it in ~/.huggingface/token)
+        print("ℹ️  No Hugging Face token provided. Using public models or cached credentials.")
+    
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -253,20 +285,23 @@ def main():
         model = LLaVARunner(
             model_name=args.model_name,
             device=device,
-            class_names=args.class_names
+            class_names=args.class_names,
+            hf_token=hf_token
         )
     elif args.model_arch == 'llava_med':
         from src.models.llava_med_runner import LLaVAMedRunner
         model = LLaVAMedRunner(
             model_name=args.model_name,
             device=device,
-            class_names=args.class_names
+            class_names=args.class_names,
+            hf_token=hf_token
         )
     else:
         model = MultimodalModelWrapper(
             model_name=args.model_name,
             device=device,
-            class_names=args.class_names
+            class_names=args.class_names,
+            hf_token=hf_token
         )
     
     print("\nOrganizing images by modality...")

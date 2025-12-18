@@ -7,7 +7,7 @@
 # Optimized for accuracy and performance on medical images
 # ============================================================================
 
-python -m src.main \
+python3 -m src.main \
     --data_root data \
     --modalities CT PET \
     --model_arch clip \
@@ -18,6 +18,8 @@ python -m src.main \
     --class_names high_grade low_grade \
     --temperature 0.8 \
     --aggressive_preprocess
+    # Optional: Add --hf_token YOUR_TOKEN_HERE for private models
+    # Or set HF_TOKEN in .env file
 
 # ============================================================================
 # CONFIGURATION EXPLANATION:
@@ -53,5 +55,9 @@ python -m src.main \
 #
 # 5. For different model (larger, slower, potentially more accurate):
 #    --model_name laion/CLIP-ViT-H-14-laion2B-s32B-b79K
+#
+# 6. For private Hugging Face models (requires token):
+#    --hf_token hf_xxxxxxxxxxxxx
+#    OR set environment variable: export HF_TOKEN=hf_xxxxxxxxxxxxx
 #
 # ============================================================================

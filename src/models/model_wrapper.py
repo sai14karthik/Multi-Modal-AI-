@@ -4,6 +4,8 @@ Uses zero-shot classification with text prompts.
 """
 
 import contextlib
+import os
+import sys
 import numpy as np
 from typing import Dict, List, Optional
 
@@ -26,7 +28,8 @@ class MultimodalModelWrapper:
         self,
         model_name: str = "openai/clip-vit-large-patch14",
         device: Optional[str] = None,
-        class_names: Optional[List[str]] = None
+        class_names: Optional[List[str]] = None,
+        hf_token: Optional[str] = None
     ):
         """
         Args:
@@ -37,6 +40,7 @@ class MultimodalModelWrapper:
                 - "laion/CLIP-ViT-H-14-laion2B-s32B-b79K" (larger, better performance)
                 - "microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224" (medical-specific)
             device: Device to run on ('cuda' or 'cpu')
+            hf_token: Hugging Face token for accessing private models. Can also be set via HF_TOKEN environment variable.
             
         Note: ResNet-based CLIP models (rn50, rn101) are NOT available on Hugging Face.
         """
@@ -49,10 +53,10 @@ class MultimodalModelWrapper:
         self.class_names = [name.strip() for name in self.class_names]
         self._default_classes = {name.lower() for name in self.class_names} == {"healthy", "tumor"}
         
-        print(f"\nLoading model: {model_name}...")
+        # Get token from parameter or environment variable
+        self.hf_token = hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN')
         
-        import sys
-        import os
+        print(f"\nLoading model: {model_name}...")
         
         # Suppress stderr during model loading to hide verbose messages
         @contextlib.contextmanager
@@ -72,8 +76,9 @@ class MultimodalModelWrapper:
                 
                 try:
                     with suppress_stderr():
-                        self.model = CLIPModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
-                        self.processor = CLIPProcessor.from_pretrained(model_name, trust_remote_code=True)
+                        token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                        self.model = CLIPModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
+                        self.processor = CLIPProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                     loaded = True
                 except Exception:
                     pass
@@ -82,8 +87,9 @@ class MultimodalModelWrapper:
                     try:
                         from transformers import AutoModel, AutoProcessor
                         with suppress_stderr():
-                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
-                            self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+                            token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
+                            self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                         loaded = True
                     except Exception:
                         pass
@@ -92,13 +98,14 @@ class MultimodalModelWrapper:
                     try:
                         from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoImageProcessor
                         with suppress_stderr():
-                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
+                            token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
                             try:
-                                self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+                                self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                             except Exception:
                                 # If AutoProcessor fails, create a CombinedProcessor
-                                image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True)
-                                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                                image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
+                                tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                                 
                                 class CombinedProcessor:
                                     def __init__(self, image_processor, tokenizer):
@@ -121,15 +128,17 @@ class MultimodalModelWrapper:
                 if not loaded:
                     self.model_name = "openai/clip-vit-large-patch14"
                     with suppress_stderr():
-                        self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
-                        self.processor = CLIPProcessor.from_pretrained(self.model_name)
+                        token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                        self.model = CLIPModel.from_pretrained(self.model_name, **token_kwargs).to(self.device)
+                        self.processor = CLIPProcessor.from_pretrained(self.model_name, **token_kwargs)
             elif "laion" in model_name.lower():
                 # LAION CLIP models might need different loading
                 loaded = False
                 try:
                     with suppress_stderr():
-                        self.model = CLIPModel.from_pretrained(model_name).to(self.device)
-                        self.processor = CLIPProcessor.from_pretrained(model_name)
+                        token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                        self.model = CLIPModel.from_pretrained(model_name, **token_kwargs).to(self.device)
+                        self.processor = CLIPProcessor.from_pretrained(model_name, **token_kwargs)
                     loaded = True
                 except Exception as e:
                     error_msg = str(e)
@@ -138,8 +147,9 @@ class MultimodalModelWrapper:
                     try:
                         from transformers import AutoModel, AutoProcessor
                         with suppress_stderr():
-                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(self.device)
-                            self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+                            token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
+                            self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                         loaded = True
                         print(f"✅ Successfully loaded {model_name} using AutoModel")
                     except Exception as e2:
@@ -153,24 +163,27 @@ class MultimodalModelWrapper:
                     raise RuntimeError(f"Could not load {model_name} with any method. The model may not exist or may require special configuration.")
             else:
                 with suppress_stderr():
-                    self.model = CLIPModel.from_pretrained(model_name).to(self.device)
-                    self.processor = CLIPProcessor.from_pretrained(model_name)
+                    token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                    self.model = CLIPModel.from_pretrained(model_name, **token_kwargs).to(self.device)
+                    self.processor = CLIPProcessor.from_pretrained(model_name, **token_kwargs)
         except Exception as e:
             print(f"Error loading {model_name}: {e}")
             print("Falling back to CLIP ViT-Large...")
             self.model_name = "openai/clip-vit-large-patch14"
             try:
                 with suppress_stderr():
-                    self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
-                    self.processor = CLIPProcessor.from_pretrained(self.model_name)
+                    token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                    self.model = CLIPModel.from_pretrained(self.model_name, **token_kwargs).to(self.device)
+                    self.processor = CLIPProcessor.from_pretrained(self.model_name, **token_kwargs)
             except Exception as fallback_error:
                 print(f"Error with fallback: {fallback_error}")
                 print("Falling back to CLIP ViT-Base...")
                 self.model_name = "openai/clip-vit-base-patch32"
                 try:
                     with suppress_stderr():
-                        self.model = CLIPModel.from_pretrained(self.model_name).to(self.device)
-                        self.processor = CLIPProcessor.from_pretrained(self.model_name)
+                        token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                        self.model = CLIPModel.from_pretrained(self.model_name, **token_kwargs).to(self.device)
+                        self.processor = CLIPProcessor.from_pretrained(self.model_name, **token_kwargs)
                 except Exception as final_error:
                     raise RuntimeError(
                         f"Failed to load any CLIP model. Original error: {e}, "

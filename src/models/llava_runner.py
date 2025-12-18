@@ -12,8 +12,7 @@ from typing import Dict, List, Optional
 import torch
 from PIL import Image
 
-# Add both LLaVA repos to path
-_llava_path = os.path.join(os.path.dirname(__file__), '../../third_party/llava')
+# Add LLaVA-Med repo to path (supports both regular LLaVA and LLaVA-Med models)
 _llava_med_path = os.path.join(os.path.dirname(__file__), '../../third_party/llava-med')
 
 os.environ.setdefault("BITSANDBYTES_NOWELCOME", "1")
@@ -40,6 +39,7 @@ class LLaVARunner:
         model_name: str = "liuhaotian/llava-v1.6-mistral-7b",
         device: Optional[str] = None,
         class_names: Optional[List[str]] = None,
+        hf_token: Optional[str] = None,
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.class_names = class_names or ["high_grade", "low_grade"]
@@ -55,6 +55,12 @@ class LLaVARunner:
         if self.device == "cpu":
             print("⚠️  WARNING: Running on CPU. LLaVA inference will be VERY SLOW (~10-15 min per image).")
             print("   Consider using GPU (--device cuda) or a faster model like CLIP for CPU testing.")
+        
+        # Get token from parameter or environment variable
+        self.hf_token = hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN')
+        if self.hf_token:
+            os.environ['HF_TOKEN'] = self.hf_token
+            os.environ['HUGGING_FACE_HUB_TOKEN'] = self.hf_token
         
         # Load model using the builder
         # Note: LLaVA-Med builder supports Mistral-based LLaVA models
@@ -107,8 +113,20 @@ class LLaVARunner:
         
         print("✅ Model loaded successfully!\n")
 
-    def _build_prompt(self) -> str:
+    def _build_prompt(self, previous_predictions: Optional[Dict[str, Dict]] = None) -> str:
         first, second = self.class_names
+        
+        # Build context string if previous predictions are available
+        context_parts = []
+        if previous_predictions:
+            for mod, pred_info in previous_predictions.items():
+                pred_class = pred_info.get('class_name', self.class_names[pred_info.get('prediction', 0)])
+                context_parts.append(f"the {mod} scan showed {pred_class}")
+        
+        context_prefix = ""
+        if context_parts:
+            context_str = ", and ".join(context_parts)
+            context_prefix = f"Given that {context_str}, "
         
         # Detect if this is lung cancer grading
         is_grading = any(
@@ -118,23 +136,23 @@ class LLaVARunner:
         
         if is_grading:
             return (
-                "You are a medical imaging expert specializing in lung cancer. "
+                f"{context_prefix}You are a medical imaging expert specializing in lung cancer. "
                 "Given this lung CT or PET scan slice, determine whether the lung cancer grade is "
                 f"{first} or {second}. "
                 f"Respond with exactly one word: {first} or {second}."
             )
         else:
             return (
-                "You are a medical imaging expert. "
+                f"{context_prefix}You are a medical imaging expert. "
                 "Given this lung CT or PET scan slice, determine whether it shows "
                 f"{first} or {second}. "
                 f"Respond with exactly one word: {first} or {second}."
             )
 
     @torch.inference_mode()
-    def _predict_single(self, image: Image.Image) -> Dict:
+    def _predict_single(self, image: Image.Image, previous_predictions: Optional[Dict[str, Dict]] = None) -> Dict:
         conv = self.conv_template.copy()
-        conv.append_message(conv.roles[0], self._build_prompt())
+        conv.append_message(conv.roles[0], self._build_prompt(previous_predictions=previous_predictions))
         conv.append_message(conv.roles[1], None)
         prompt = conv.get_prompt()
 
@@ -211,11 +229,17 @@ class LLaVARunner:
         temperature: float = 1.0,
         use_weighted_ensemble: bool = True,
         try_both_swaps: bool = True,
+        previous_predictions: Optional[Dict[str, Dict]] = None,
         **_,
     ) -> Dict:
         """
         Predict using LLaVA model.
         For multimodal inputs, uses the first available modality.
+        
+        Args:
+            previous_predictions: Optional dict mapping modality names to their predictions.
+                Format: {'CT': {'prediction': 0, 'class_name': 'high_grade'}, ...}
+                If provided, prompts will incorporate this context.
         """
         if not images:
             raise ValueError("LLaVARunner expects at least one image.")
@@ -227,5 +251,5 @@ class LLaVARunner:
         if isinstance(image, list):
             image = image[0]
         
-        return self._predict_single(image)
+        return self._predict_single(image, previous_predictions=previous_predictions)
 
