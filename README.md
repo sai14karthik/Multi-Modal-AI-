@@ -22,9 +22,7 @@ python -m src.data.prepare_lung_pet_ct \
 
 This converts all CT/PET DICOM slices into PNGs under `data/Lung-PET-CT-Dx/{CT,PT}/<class>` and writes `metadata.csv` with patient IDs, modality identifiers, histology-based class labels (`high_grade`, `low_grade`), and deterministic train/val/test splits.
 
-### Legacy Brain Tumor Demo
 
-If you want the earlier CT/MRI toy dataset, keep the original folder structure (`data/Brain Tumor CT scan Images`, `data/Brain Tumor MRI images`) and run without `--dataset_config`. The loader automatically falls back to the legacy mapping.
 
 ## Installation
 
@@ -80,23 +78,4 @@ Results are saved to `results/` directory in JSON format with accuracy metrics f
 See `requirements.txt` for full dependencies.
 
 
-
-## Project Structure
-
-```
-.
-├── src/
-│   ├── main.py              # Main evaluation script
-│   ├── models/
-│   │   └── model_wrapper.py # CLIP model wrapper
-│   ├── data/
-│   │   └── dataloader.py    # Data loading utilities
-│   └── utils/
-│       └── evaluation.py    # Evaluation metrics
-├── data/                    # Dataset directory
-├── results/                 # Output results
-├── run.sh                   # Execution script
-└── requirements.txt         # Dependencies
-
-```
 

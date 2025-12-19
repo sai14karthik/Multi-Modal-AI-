@@ -17,6 +17,13 @@ from PIL import Image, ImageEnhance, ImageOps
 import torch
 from transformers import CLIPProcessor, CLIPModel
 
+# Try to import SigLIP for Google models
+try:
+    from transformers import SiglipModel, SiglipProcessor
+    SIGLIP_AVAILABLE = True
+except ImportError:
+    SIGLIP_AVAILABLE = False
+
 
 class MultimodalModelWrapper:
     """
@@ -47,6 +54,7 @@ class MultimodalModelWrapper:
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_name = model_name
         self.is_biomedclip = "biomedclip" in model_name.lower() or "biomed" in model_name.lower()
+        self.is_siglip = "siglip" in model_name.lower()
         self.class_names = class_names or ["Healthy", "Tumor"]
         if len(self.class_names) != 2:
             raise ValueError("MultimodalModelWrapper currently supports exactly two classes.")
@@ -71,7 +79,22 @@ class MultimodalModelWrapper:
         
         try:
             # Try to load the specified model
-            if "biomedclip" in model_name.lower() or "biomed" in model_name.lower():
+            if self.is_siglip and SIGLIP_AVAILABLE:
+                # Google SigLIP models use different classes
+                with suppress_stderr():
+                    token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                    self.model = SiglipModel.from_pretrained(model_name, **token_kwargs).to(self.device)
+                    self.processor = SiglipProcessor.from_pretrained(model_name, **token_kwargs)
+                print(f"✅ Loaded SigLIP model: {model_name}")
+            elif self.is_siglip and not SIGLIP_AVAILABLE:
+                print(f"Warning: SigLIP not available in this transformers version. Falling back to CLIP.")
+                self.is_siglip = False
+                self.model_name = "openai/clip-vit-large-patch14"
+                with suppress_stderr():
+                    token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                    self.model = CLIPModel.from_pretrained(self.model_name, **token_kwargs).to(self.device)
+                    self.processor = CLIPProcessor.from_pretrained(self.model_name, **token_kwargs)
+            elif "biomedclip" in model_name.lower() or "biomed" in model_name.lower():
                 loaded = False
                 
                 try:
@@ -131,6 +154,31 @@ class MultimodalModelWrapper:
                         token_kwargs = {"token": self.hf_token} if self.hf_token else {}
                         self.model = CLIPModel.from_pretrained(self.model_name, **token_kwargs).to(self.device)
                         self.processor = CLIPProcessor.from_pretrained(self.model_name, **token_kwargs)
+            elif "metaclip" in model_name.lower() or "dfn" in model_name.lower():
+                # Meta MetaCLIP and Apple DFN models
+                loaded = False
+                try:
+                    with suppress_stderr():
+                        token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                        self.model = CLIPModel.from_pretrained(model_name, **token_kwargs).to(self.device)
+                        self.processor = CLIPProcessor.from_pretrained(model_name, **token_kwargs)
+                    loaded = True
+                    print(f"✅ Loaded {model_name} as CLIPModel")
+                except Exception as e:
+                    print(f"Warning: Could not load {model_name} as CLIPModel, trying AutoModel...")
+                    try:
+                        from transformers import AutoModel, AutoProcessor
+                        with suppress_stderr():
+                            token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
+                            self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
+                        loaded = True
+                        print(f"✅ Loaded {model_name} using AutoModel")
+                    except Exception as e2:
+                        print(f"Warning: AutoModel also failed: {str(e2)[:200]}")
+                
+                if not loaded:
+                    raise RuntimeError(f"Could not load {model_name}")
             elif "laion" in model_name.lower():
                 # LAION CLIP models might need different loading
                 loaded = False

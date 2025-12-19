@@ -78,7 +78,7 @@ class LLaVAMedRunner:
         if hasattr(self.model, 'config'):
             self.model.config.use_cache = True
         self.conv_template = conv_templates["llava_v1"]
-        
+
         print("✅ Model loaded successfully!\n")
 
     def _build_prompt(self, previous_predictions: Optional[Dict[str, Dict]] = None) -> str:

@@ -34,6 +34,7 @@ rsync -avz --progress \
   .env.example \
   submit_top5_models.sh \
   submit_llava_med.sh \
+  submit_5_new_models.sh \
   test_quick.sh \
   third_party/llava-med/llava/model/builder.py \
   sa808371@newton.ist.ucf.edu:~/Multi-Modal-AI/
