@@ -7,9 +7,9 @@
 TEST_MODE=false
 if [ "$1" == "test" ]; then
     TEST_MODE=true
-    echo "🧪 TEST MODE: Running with 10 samples..."
+    echo "TEST MODE: Running with 10 samples..."
 else
-    echo "🔧 Installing LLaVA-Med dependencies..."
+    echo " Installing LLaVA-Med dependencies..."
 fi
 echo ""
 
@@ -44,8 +44,8 @@ echo "Clearing corrupted tokenizer cache..."
 rm -rf ~/.cache/huggingface/hub/models--microsoft--llava-med-v1.5-mistral-7b/snapshots/*/tokenizer.model 2>/dev/null || true
 
 # Verify installation
-python3 -c "import tiktoken; import google.protobuf; import sentencepiece; print('✅ Dependencies verified')" || {
-    echo "❌ Dependency verification failed!"
+python3 -c "import tiktoken; import google.protobuf; import sentencepiece; print(' Dependencies verified')" || {
+    echo " Dependency verification failed!"
     exit 1
 }
 
@@ -81,8 +81,8 @@ echo "Clearing corrupted tokenizer cache..."
 rm -rf ~/.cache/huggingface/hub/models--microsoft--llava-med-v1.5-mistral-7b/snapshots/*/tokenizer.model 2>/dev/null || true
 
 # Verify installation
-python3 -c "import tiktoken; import google.protobuf; import sentencepiece; print('✅ Dependencies verified')" || {
-    echo "❌ Dependency verification failed!"
+python3 -c "import tiktoken; import google.protobuf; import sentencepiece; print(' Dependencies verified')" || {
+    echo " Dependency verification failed!"
     exit 1
 }
 
@@ -98,21 +98,21 @@ chmod +x "$JOB_SCRIPT"
 if [ "$TEST_MODE" = true ]; then
     echo "📝 Submitting LLaVA-Med TEST job..."
     JOB_ID=$(sbatch "$JOB_SCRIPT" | awk '{print $4}')
-    echo "   ✅ Test job $JOB_ID submitted"
+    echo "    Test job $JOB_ID submitted"
     echo ""
-    echo "📊 Monitor: squeue -u \$USER"
-    echo "📄 Logs: tail -f output_llava-med-test_${JOB_ID}.log"
+    echo " Monitor: squeue -u \$USER"
+    echo " Logs: tail -f output_llava-med-test_${JOB_ID}.log"
     echo ""
-    echo "⏱️  Note: Test mode runs 10 samples (~30-60 minutes)"
+    echo "⏱   Note: Test mode runs 10 samples (~30-60 minutes)"
 else
-    echo "📝 Submitting LLaVA-Med job..."
+    echo "  Submitting LLaVA-Med job..."
     JOB_ID=$(sbatch "$JOB_SCRIPT" | awk '{print $4}')
-    echo "   ✅ Job $JOB_ID submitted"
+    echo "   Job $JOB_ID submitted"
     echo ""
-    echo "📊 Monitor: squeue -u \$USER"
-    echo "📄 Logs: tail -f output_llava-med_${JOB_ID}.log"
+    echo " Monitor: squeue -u \$USER"
+    echo "  Logs: tail -f output_llava-med_${JOB_ID}.log"
     echo ""
-    echo "⏱️  Note: LLaVA-Med is slower (8-12 hours expected)"
+    echo " Note: LLaVA-Med is slower (8-12 hours expected)"
 fi
 
 # Clean up temp script

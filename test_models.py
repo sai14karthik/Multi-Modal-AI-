@@ -56,11 +56,11 @@ def check_data_available():
     config_path = 'data/dataset_config.yaml'
     
     if not os.path.exists(data_root):
-        print(f"❌ Data root not found: {data_root}")
+        print(f" Data root not found: {data_root}")
         return False
     
     if not os.path.exists(config_path):
-        print(f"⚠️  Dataset config not found: {config_path}")
+        print(f" Dataset config not found: {config_path}")
         print("   Will use default configuration")
     
     return True
@@ -124,7 +124,7 @@ def test_model(model_config, max_samples=10, timeout=300):
                     
                     # Check if results are valid
                     if 'step_accuracies' in results:
-                        print(f"✅ Model loaded and inference completed successfully!")
+                        print(f" Model loaded and inference completed successfully!")
                         print(f"   Results saved to: {results_file}")
                         
                         # Print accuracy summary
@@ -157,7 +157,7 @@ def main():
     
     # Check if data is available
     if not check_data_available():
-        print("\n❌ Cannot run tests without data. Please prepare the dataset first.")
+        print("\n Cannot run tests without data. Please prepare the dataset first.")
         return 1
     
     # Create test results directory
@@ -192,11 +192,11 @@ def main():
                     'error': error_msg,
                     'output': output[:500] if output else ''  # Truncate long output
                 })
-                print(f"\n❌ Test failed: {error_msg}")
+                print(f"\n Test failed: {error_msg}")
                 if output:
                     print(f"   Output (last 500 chars):\n{output[-500:]}")
         except KeyboardInterrupt:
-            print("\n\n⚠️  Tests interrupted by user")
+            print("\n\n Tests interrupted by user")
             results['skipped'].extend([
                 {
                     'model': m['name'],
@@ -214,23 +214,23 @@ def main():
                 'error': f"Unexpected error: {str(e)}",
                 'output': ''
             })
-            print(f"\n❌ Unexpected error testing {model_name}: {e}")
+            print(f"\n Unexpected error testing {model_name}: {e}")
     
     # Print summary
     print("\n" + "="*80)
     print("TEST SUMMARY")
     print("="*80)
-    print(f"\n✅ Passed: {len(results['passed'])}")
+    print(f"\n Passed: {len(results['passed'])}")
     for result in results['passed']:
         print(f"   - {result['description']} ({result['model']})")
     
-    print(f"\n❌ Failed: {len(results['failed'])}")
+    print(f"\n Failed: {len(results['failed'])}")
     for result in results['failed']:
         print(f"   - {result['description']} ({result['model']})")
         print(f"     Error: {result['error']}")
     
     if results['skipped']:
-        print(f"\n⏭️  Skipped: {len(results['skipped'])}")
+        print(f"\n Skipped: {len(results['skipped'])}")
         for result in results['skipped']:
             print(f"   - {result['description']} ({result['model']})")
     

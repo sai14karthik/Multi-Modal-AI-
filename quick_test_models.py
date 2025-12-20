@@ -124,7 +124,7 @@ def test_model_loading(model_config):
         
         # Validate result
         if 'prediction' in result and 'confidence' in result:
-            print(f"✅ Inference successful!")
+            print(f" Inference successful!")
             print(f"   Prediction: {result['prediction']}")
             print(f"   Confidence: {result['confidence']:.4f}")
             if 'probabilities' in result:
@@ -135,7 +135,7 @@ def test_model_loading(model_config):
             
     except Exception as e:
         error_msg = f"{type(e).__name__}: {str(e)}"
-        print(f"❌ Error: {error_msg}")
+        print(f" Error: {error_msg}")
         traceback.print_exc()
         return False, error_msg
 
@@ -169,7 +169,7 @@ def main():
                     'error': error
                 })
         except KeyboardInterrupt:
-            print("\n\n⚠️  Tests interrupted by user")
+            print("\n\n Tests interrupted by user")
             break
         except Exception as e:
             results['failed'].append({
@@ -183,13 +183,13 @@ def main():
     print("\n" + "="*80)
     print("TEST SUMMARY")
     print("="*80)
-    print(f"\n✅ Passed: {len(results['passed'])}/{len(TEST_MODELS)}")
+    print(f"\n Passed: {len(results['passed'])}/{len(TEST_MODELS)}")
     for result in results['passed']:
         print(f"   ✓ {result['description']}")
     
-    print(f"\n❌ Failed: {len(results['failed'])}/{len(TEST_MODELS)}")
+    print(f"\n Failed: {len(results['failed'])}/{len(TEST_MODELS)}")
     for result in results['failed']:
-        print(f"   ✗ {result['description']}")
+        print(f"  {result['description']}")
         print(f"     Error: {result['error']}")
     
     return 0 if len(results['failed']) == 0 else 1

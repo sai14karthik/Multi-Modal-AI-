@@ -19,7 +19,7 @@ JOB_IDS=()
 for model_config in "${MODELS[@]}"; do
     IFS=':' read -r model_name model_arch job_name <<< "$model_config"
     
-    echo "📝 Submitting: $job_name"
+    echo " Submitting: $job_name"
     
     # Create temporary job script
     JOB_SCRIPT="submit_${job_name}_tmp.sh"
@@ -52,12 +52,12 @@ EOF
     rm -f "$JOB_SCRIPT"
     
     JOB_IDS+=("$JOB_ID")
-    echo "   ✅ Job $JOB_ID submitted"
+    echo "    Job $JOB_ID submitted"
     echo ""
 done
 
-echo "✅ Submitted ${#JOB_IDS[@]} jobs"
+echo " Submitted ${#JOB_IDS[@]} jobs"
 echo ""
-echo "📊 Monitor: squeue -u \$USER"
-echo "📄 Logs: tail -f output_*_*.log"
+echo " Monitor: squeue -u \$USER"
+echo " Logs: tail -f output_*_*.log"
 
