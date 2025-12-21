@@ -13,22 +13,44 @@
         "std_probability_gap": 0.11212246337643021,
         "avg_logit_magnitude": 40.93368638648866,
         "std_logit_magnitude": 3.561166451447789,
+        "avg_calibrated_confidence": 0.578755931480129,
+        "avg_calibration_error": 0.01518614006118571,
         "num_samples": 156
       }
     },
     "PET": {
-      "accuracy": 0.4551282051282051,
+      "accuracy": 0.4807692307692308,
       "num_samples": 156,
       "certainty_metrics": {
         "modality": "PET",
-        "avg_confidence": 0.6523492890290725,
-        "std_confidence": 0.10307862297499,
-        "avg_entropy": 0.8966485238164816,
-        "std_entropy": 0.11533416665767081,
-        "avg_probability_gap": 0.30469857334099926,
-        "std_probability_gap": 0.20615723908965805,
+        "avg_confidence": 0.7464855366792434,
+        "std_confidence": 0.06044871094383561,
+        "avg_entropy": 0.8030279188069745,
+        "std_entropy": 0.0896263938739293,
+        "avg_probability_gap": 0.49297106693113124,
+        "std_probability_gap": 0.12089742137295625,
+        "avg_logit_magnitude": 37.114411907132,
+        "std_logit_magnitude": 3.264187553772067,
+        "avg_calibrated_confidence": 0.7464855315206106,
+        "avg_calibration_error": 0.041632639605222205,
+        "num_samples": 156
+      }
+    },
+    "CT+PET": {
+      "accuracy": 0.4551282051282051,
+      "num_samples": 156,
+      "certainty_metrics": {
+        "modality": "CT+PET",
+        "avg_confidence": 0.956794146543894,
+        "std_confidence": 0.0433180660334032,
+        "avg_entropy": 0.22847224999282828,
+        "std_entropy": 0.17170001371807406,
+        "avg_probability_gap": 0.9135882855041462,
+        "std_probability_gap": 0.08663613144151797,
         "avg_logit_magnitude": 37.765489544194494,
         "std_logit_magnitude": 3.530177878520751,
+        "avg_calibrated_confidence": 0.6523493257400309,
+        "avg_calibration_error": 0.02659207179611986,
         "num_samples": 156
       }
     }
@@ -38,26 +60,141 @@
     "PET"
   ],
   "agreement_metrics": {
-    "agreement_rate": 0.5,
-    "disagreement_rate": 0.5,
+    "agreement_rate": 0.9423076923076923,
+    "disagreement_rate": 0.057692307692307696,
     "ct_dominates": 0,
-    "pet_dominates": 26,
+    "pet_dominates": 3,
+    "num_pairs": 52,
+    "disagreement_confidence_analysis": {
+      "avg_ct_confidence_when_disagree": 0.5169880390167236,
+      "avg_pet_confidence_when_disagree": 0.7389588157335917,
+      "std_ct_confidence_when_disagree": 0.01413140107082567,
+      "std_pet_confidence_when_disagree": 0.06115521050235158,
+      "confidence_difference": 0.22197077671686805,
+      "avg_confidence_when_agree": 0.6714600634818174,
+      "confidence_drop_on_disagreement": 0.35747334979423856
+    },
+    "disagreement_logit_analysis": {
+      "avg_logit_magnitude_ct_when_disagree": 39.8446593596211,
+      "avg_logit_magnitude_pet_when_disagree": 33.92333295178582,
+      "avg_logit_variance_ct_when_disagree": 0.0012535627135245402,
+      "avg_logit_variance_pet_when_disagree": 0.2015041653363975,
+      "logit_instability_indicator": 0.10137886402496103
+    }
+  },
+  "ct_vs_combined_agreement": {
+    "agreement_rate": 0.5192307692307693,
+    "disagreement_rate": 0.4807692307692308,
+    "ct_dominates": 0,
+    "pet_dominates": 25,
+    "num_pairs": 52,
+    "disagreement_confidence_analysis": {
+      "avg_ct_confidence_when_disagree": 0.5936960339546203,
+      "avg_pet_confidence_when_disagree": 0.9451056647300721,
+      "std_ct_confidence_when_disagree": 0.06536532875161619,
+      "std_pet_confidence_when_disagree": 0.04208736958873563,
+      "confidence_difference": 0.35140963077545173,
+      "avg_confidence_when_agree": 0.7793823590985051,
+      "confidence_drop_on_disagreement": 0.39468193442733196
+    },
+    "disagreement_logit_analysis": {
+      "avg_logit_magnitude_ct_when_disagree": 39.119829860180914,
+      "avg_logit_magnitude_pet_when_disagree": 40.04219955231879,
+      "avg_logit_variance_ct_when_disagree": 0.037903105332297855,
+      "avg_logit_variance_pet_when_disagree": 0.15726693418338983,
+      "logit_instability_indicator": 0.09758501975784384
+    }
+  },
+  "modality_combination_analysis": {
+    "combined_confidence": 0.956794146543894,
+    "average_single_modality_confidence": 0.6626207276414602,
+    "confidence_change": 0.29417341890243387,
+    "confidence_effect": "INCREASES",
+    "combined_entropy": 0.22847224999282828,
+    "average_single_modality_entropy": 0.8877767679090156,
+    "entropy_change": -0.6593045179161874,
+    "entropy_effect": "REDUCES_UNCERTAINTY",
+    "interpretation": "Combining modalities increases confidence (+0.2942) and reduces uncertainty (-0.6593 entropy change)"
+  },
+  "logit_similarity_analysis": {
+    "avg_cosine_similarity": 0.9998889320583875,
+    "std_cosine_similarity": 0.00010365768101083992,
+    "min_cosine_similarity": 0.999575611096338,
+    "max_cosine_similarity": 0.9999999128661929,
     "num_pairs": 52
   },
+  "pet_vs_ct_analysis": {
+    "pet_higher_confidence_rate": 1.0,
+    "ct_higher_confidence_rate": 0.0,
+    "equal_confidence_rate": 0.0,
+    "avg_confidence_difference": 0.3777213234167833,
+    "std_confidence_difference": 0.0767911420115143,
+    "consistent_pet_dominance": true,
+    "num_pairs": 52,
+    "interpretation": "PET has higher confidence in 100.0% of cases. Average difference (PET - CT): +0.3777. PET CONSISTENTLY DOMINATES"
+  },
+  "pet_dominance_analysis": {
+    "pet_higher_confidence_rate": 0.9615384615384616,
+    "ct_higher_confidence_rate": 0.038461538461538464,
+    "avg_confidence_difference": 0.16206728265835688,
+    "std_confidence_difference": 0.08827856277498793,
+    "pet_wins_when_disagree": 6,
+    "ct_wins_when_disagree": 0,
+    "systematic_pet_bias": true,
+    "num_pairs": 52,
+    "interpretation": "PET has higher confidence in 96.2% of cases. Average difference: +0.1621. SYSTEMATIC PET BIAS DETECTED."
+  },
+  "uncertainty_effect_analysis": {
+    "uncertainty_reduction_rate": 1.0,
+    "conflict_introduction_rate": 0.0,
+    "avg_entropy_change": -0.6566878660534805,
+    "avg_confidence_change": 0.2966876820876048,
+    "multimodal_value": "REDUCES_UNCERTAINTY",
+    "num_triplets": 52,
+    "interpretation": "Multimodality reduces uncertainty. Entropy change: -0.6567, Confidence change: +0.2967. 52/52 cases show uncertainty reduction, 0/52 show conflict introduction"
+  },
+  "multimodal_value_analysis": {
+    "multimodal_value_demonstrated": false,
+    "agreement_benefit": 0.29339493616767554,
+    "disagreement_uncertainty": -0.32193206747372943,
+    "disagreement_handling": "INAPPROPRIATE_CONFIDENCE",
+    "information_integration_rate": 0.0,
+    "information_integration": false,
+    "num_agreement_cases": 46,
+    "num_disagreement_cases": 6,
+    "num_triplets": 52,
+    "interpretation": "Zero-shot VLM DOES NOT CLEARLY DEMONSTRATE multimodal value. Agreement benefit: +0.2934, Disagreement handling: inappropriate confidence, Information integration: 0.0%"
+  },
+  "multimodal_bias_analysis": {
+    "combined_matches_pet_rate": 0.5,
+    "combined_matches_ct_rate": 0.5,
+    "combined_matches_both_rate": 0.4423076923076923,
+    "pet_bias_score": 0.057692307692307696,
+    "true_combination_rate": 0.4423076923076923,
+    "simple_pet_bias": false,
+    "num_triplets": 52,
+    "interpretation": "Combined matches PET: 50.0%, CT: 50.0%. Appears to be true combination (True combination rate: 44.2%)"
+  },
   "patient_level_agreement": {
-    "agreement_rate": 0.38461538461538464,
-    "disagreement_rate": 0.6153846153846154,
-    "ct_dominates": 27,
-    "pet_dominates": 5,
-    "num_pairs": 52
+    "patient_level_agreement_rate": 0.75,
+    "slice_level_agreement_rate": 0.9423076923076923,
+    "agreement_improvement": -0.1923076923076923,
+    "patient_agreements": 39,
+    "patient_disagreements": 13,
+    "num_patients": 52,
+    "interpretation": "Patient-level agreement: 0.7500 vs Slice-level: 0.9423 (-0.1923 change)"
   },
   "ct_context_influence": {
     "context_changes_prediction": 0,
     "context_changes_prediction_rate": 0.0,
     "context_increases_confidence": 156,
     "context_decreases_confidence": 0,
+    "significant_confidence_increases": 156,
     "avg_confidence_change": 0.3044448575148216,
     "std_confidence_change": 0.08939822197679569,
-    "num_samples": 156
+    "avg_entropy_change": -0.6681762738236534,
+    "context_used": true,
+    "num_samples": 156,
+    "interpretation": "CT context IS BEING USED. Average confidence change: +0.3044. 156/156 cases show significant increase (>5%)"
   }
 }
