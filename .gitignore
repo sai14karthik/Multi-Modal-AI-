@@ -53,7 +53,10 @@ results/
 result/
 outputs/
 logs/
+test_results/
 *.log
+output_*.log
+error_*.log
 
 # Jupyter
 .ipynb_checkpoints/
@@ -63,6 +66,7 @@ logs/
 .cache/
 .huggingface/
 transformers_cache/
+~/.cache/huggingface/
 
 # Environment variables
 .env
@@ -73,6 +77,21 @@ transformers_cache/
 *.temp
 tmp/
 temp/
+submit_*_tmp.sh
+
+# Third-party repositories
+# Note: third_party/llava-med is a git submodule, so it's tracked separately
+# third_party/llava/ is a large regular directory - should be ignored
+third_party/llava/
+# Ignore contents inside third_party directories (cache, build artifacts, etc.)
+third_party/*/__pycache__/
+third_party/*/__pycache__/**/*
+third_party/*/*.egg-info/
+third_party/*/.DS_Store
+third_party/*/checkpoints/
+third_party/*/results/
+third_party/*/outputs/
+third_party/*/*.log
 
 # LLaVA-Med specific
 third_party/llava-med/checkpoints/
@@ -82,4 +101,10 @@ third_party/llava-med/__pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Verification/test scripts (optional - uncomment if you don't want to track these)
+# verify_codebase.py
+# verify_code_structure.py
+# test_*.py
+# quick_test_*.py
 
