@@ -2,7 +2,7 @@
 # Submit 5 new models for medical imaging evaluation
 # Usage: ./submit_5_new_models.sh
 
-echo " Submitting 5 new models..."
+echo "Submitting 5 new models..."
 echo ""
 
 # 5 new models (model_name:model_arch:job_name)
@@ -19,7 +19,7 @@ JOB_IDS=()
 for model_config in "${MODELS[@]}"; do
     IFS=':' read -r model_name model_arch job_name <<< "$model_config"
     
-    echo " Submitting: $job_name"
+    echo "Submitting: $job_name"
     
     # Create temporary job script
     JOB_SCRIPT="submit_${job_name}_tmp.sh"
@@ -52,7 +52,7 @@ EOF
     rm -f "$JOB_SCRIPT"
     
     JOB_IDS+=("$JOB_ID")
-    echo "   Job $JOB_ID submitted"
+    echo "    Job $JOB_ID submitted"
     echo ""
 done
 

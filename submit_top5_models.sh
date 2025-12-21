@@ -2,7 +2,7 @@
 # Submit top 5 best models for medical imaging evaluation
 # Usage: ./submit_top5_models.sh
 
-echo "🚀 Submitting top 5 models..."
+echo "Submitting top 5 models..."
 echo ""
 
 # Top 5 models (best to good)
@@ -19,7 +19,7 @@ JOB_IDS=()
 for model_config in "${MODELS[@]}"; do
     IFS=':' read -r model_name model_arch job_name <<< "$model_config"
     
-    echo " Submitting: $job_name"
+    echo "Submitting: $job_name"
     
     # Create temporary job script
     JOB_SCRIPT="submit_${job_name}_tmp.sh"

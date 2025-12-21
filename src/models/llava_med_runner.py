@@ -47,7 +47,7 @@ class LLaVAMedRunner:
 
         print(f"\nLoading LLaVA-Med model via official repo: {model_name}...")
         if self.device == "cpu":
-            print("⚠️  WARNING: Running on CPU. LLaVA-Med inference will be VERY SLOW (~10-15 min per image).")
+            print("WARNING: Running on CPU. LLaVA-Med inference will be VERY SLOW (~10-15 min per image).")
             print("   Consider using GPU (--device cuda) or a faster model like CLIP for CPU testing.")
         
         # Get token from parameter or environment variable
@@ -79,7 +79,7 @@ class LLaVAMedRunner:
             self.model.config.use_cache = True
         self.conv_template = conv_templates["llava_v1"]
 
-        print("✅ Model loaded successfully!\n")
+        print("Model loaded successfully!\n")
 
     def _build_prompt(self, previous_predictions: Optional[Dict[str, Dict]] = None) -> str:
         first, second = self.class_names

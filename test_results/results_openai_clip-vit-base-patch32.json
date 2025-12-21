@@ -1,0 +1,63 @@
+{
+  "step_results": {
+    "CT": {
+      "accuracy": 0.4807692307692308,
+      "num_samples": 156,
+      "certainty_metrics": {
+        "modality": "CT",
+        "avg_confidence": 0.578755918603677,
+        "std_confidence": 0.056061233300982616,
+        "avg_entropy": 0.9725256170110566,
+        "std_entropy": 0.03768186831025008,
+        "avg_probability_gap": 0.15751184037786284,
+        "std_probability_gap": 0.11212246337643021,
+        "avg_logit_magnitude": 40.93368638648866,
+        "std_logit_magnitude": 3.561166451447789,
+        "num_samples": 156
+      }
+    },
+    "PET": {
+      "accuracy": 0.4551282051282051,
+      "num_samples": 156,
+      "certainty_metrics": {
+        "modality": "PET",
+        "avg_confidence": 0.6523492890290725,
+        "std_confidence": 0.10307862297499,
+        "avg_entropy": 0.8966485238164816,
+        "std_entropy": 0.11533416665767081,
+        "avg_probability_gap": 0.30469857334099926,
+        "std_probability_gap": 0.20615723908965805,
+        "avg_logit_magnitude": 37.765489544194494,
+        "std_logit_magnitude": 3.530177878520751,
+        "num_samples": 156
+      }
+    }
+  },
+  "modalities": [
+    "CT",
+    "PET"
+  ],
+  "agreement_metrics": {
+    "agreement_rate": 0.5,
+    "disagreement_rate": 0.5,
+    "ct_dominates": 0,
+    "pet_dominates": 26,
+    "num_pairs": 52
+  },
+  "patient_level_agreement": {
+    "agreement_rate": 0.38461538461538464,
+    "disagreement_rate": 0.6153846153846154,
+    "ct_dominates": 27,
+    "pet_dominates": 5,
+    "num_pairs": 52
+  },
+  "ct_context_influence": {
+    "context_changes_prediction": 0,
+    "context_changes_prediction_rate": 0.0,
+    "context_increases_confidence": 156,
+    "context_decreases_confidence": 0,
+    "avg_confidence_change": 0.3044448575148216,
+    "std_confidence_change": 0.08939822197679569,
+    "num_samples": 156
+  }
+}

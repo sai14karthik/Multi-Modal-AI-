@@ -85,7 +85,7 @@ class MultimodalModelWrapper:
                     token_kwargs = {"token": self.hf_token} if self.hf_token else {}
                     self.model = SiglipModel.from_pretrained(model_name, **token_kwargs).to(self.device)
                     self.processor = SiglipProcessor.from_pretrained(model_name, **token_kwargs)
-                print(f"✅ Loaded SigLIP model: {model_name}")
+                print(f"Loaded SigLIP model: {model_name}")
             elif self.is_siglip and not SIGLIP_AVAILABLE:
                 print(f"Warning: SigLIP not available in this transformers version. Falling back to CLIP.")
                 self.is_siglip = False
@@ -163,7 +163,7 @@ class MultimodalModelWrapper:
                         self.model = CLIPModel.from_pretrained(model_name, **token_kwargs).to(self.device)
                         self.processor = CLIPProcessor.from_pretrained(model_name, **token_kwargs)
                     loaded = True
-                    print(f"✅ Loaded {model_name} as CLIPModel")
+                    print(f"Loaded {model_name} as CLIPModel")
                 except Exception as e:
                     print(f"Warning: Could not load {model_name} as CLIPModel, trying AutoModel...")
                     try:
@@ -173,7 +173,7 @@ class MultimodalModelWrapper:
                             self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
                             self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                         loaded = True
-                        print(f"✅ Loaded {model_name} using AutoModel")
+                        print(f"Loaded {model_name} using AutoModel")
                     except Exception as e2:
                         print(f"Warning: AutoModel also failed: {str(e2)[:200]}")
                 
@@ -199,7 +199,7 @@ class MultimodalModelWrapper:
                             self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
                             self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                         loaded = True
-                        print(f"✅ Successfully loaded {model_name} using AutoModel")
+                        print(f"Successfully loaded {model_name} using AutoModel")
                     except Exception as e2:
                         error_msg2 = str(e2)
                         print(f"Warning: AutoModel also failed: {error_msg2[:200]}")
@@ -688,6 +688,11 @@ class MultimodalModelWrapper:
                 healthy_logits = healthy_logits_direct
                 tumor_logits = tumor_logits_direct
         
+        # Store probabilities BEFORE boosting (for certainty analysis)
+        # For CT (no boosting), this will be the same as final probs
+        # For PET (with boosting), this captures the state before boosting
+        probs_before_boosting = probs.clone()
+        
         # Boost PET prediction using CT context (helps improve accuracy)
         # PROFESSOR'S INSIGHT: "When PET is given to model, its CT is also given saying 
         # 'hey CT gave this, what's for PET?'"
@@ -785,6 +790,9 @@ class MultimodalModelWrapper:
             self.class_names[1].lower(): max(0.0, min(1.0, probs[1].item()))
         }
         
+        # Store raw logits for certainty analysis
+        raw_logits = torch.stack([healthy_logits, tumor_logits]).cpu().numpy()
+        
         # Restore original prompts if they were modified
         if previous_predictions:
             self.class_prompts = self._original_class_prompts.copy()
@@ -793,6 +801,9 @@ class MultimodalModelWrapper:
         return {
             'prediction': prediction,
             'confidence': confidence,
-            'probabilities': prob_dict
+            'probabilities': prob_dict,
+            'logits': raw_logits.tolist(),  # For certainty analysis
+            'probabilities_array': probs.cpu().numpy().tolist(),  # Final probabilities after boosting
+            'probabilities_before_boosting': probs_before_boosting.cpu().numpy().tolist()  # Probabilities before boosting
         }
 

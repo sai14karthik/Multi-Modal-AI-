@@ -53,7 +53,7 @@ try:
     if os.path.exists(env_path):
         load_dotenv(env_path)
         if os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN'):
-            print("✅ Loaded Hugging Face token from .env file")
+            print("Loaded Hugging Face token from .env file")
 except ImportError:
     # python-dotenv not installed, skip .env loading
     pass
@@ -88,17 +88,21 @@ warnings.filterwarnings('ignore', message='.*eos_token_id.*')
 
 from PIL import Image
 import torch
+import numpy as np
 from tqdm import tqdm
 
 # Configure tqdm for better display in log files (Slurm jobs)
 # Use file=sys.stderr for better compatibility with Slurm log files
 is_slurm = os.environ.get('SLURM_JOB_ID') is not None
+# Check if running in interactive terminal
+is_interactive = sys.stdout.isatty() if hasattr(sys.stdout, 'isatty') else False
 tqdm_kwargs = {
     'file': sys.stderr if is_slurm else sys.stdout,  # stderr more reliable for Slurm
-    'ncols': 120,  # Fixed width for better log file display
+    'ncols': 100 if is_interactive else 120,  # Adjust width based on terminal
     'mininterval': 0.5,  # Update at least every 0.5 seconds
     'miniters': 1,  # Update on every iteration (for file output)
-    'disable': False  # Always show progress bars
+    'disable': False,  # Always show progress bars
+    'dynamic_ncols': True  # Allow tqdm to adjust width automatically
 }
 
 from src.data.config import load_dataset_config
@@ -108,7 +112,8 @@ from src.utils.evaluation import (
     evaluate_sequential_modalities,
     print_evaluation_results,
     save_results,
-    aggregate_patient_predictions
+    aggregate_patient_predictions,
+    analyze_modality_agreement
 )
 
 def main():
@@ -269,10 +274,10 @@ def main():
         # Set environment variable for huggingface_hub to pick up
         os.environ['HF_TOKEN'] = hf_token
         os.environ['HUGGING_FACE_HUB_TOKEN'] = hf_token
-        print("✅ Hugging Face token configured for private model access")
+        print("Hugging Face token configured for private model access")
     else:
         # Check if token is needed (user might have it in ~/.huggingface/token)
-        print("ℹ️  No Hugging Face token provided. Using public models or cached credentials.")
+        print("No Hugging Face token provided. Using public models or cached credentials.")
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
@@ -484,15 +489,9 @@ def main():
     print(f"Step 1: {first_modality} ({len(first_mod_images)} instances)")
     print(f"{'='*60}")
     
-    # Add periodic status prints for better visibility in log files
     total_images = len(first_mod_images)
-    print_interval = max(100, total_images // 20)  # Print every 5% or every 100 images
     
-    for idx, img_info in enumerate(tqdm(first_mod_images, desc=f"Processing {first_modality}", **tqdm_kwargs), 1):
-        # Print progress every N images
-        if idx % print_interval == 0 or idx == total_images:
-            progress_pct = (idx / total_images) * 100
-            print(f"[Progress] Processed {idx}/{total_images} {first_modality} images ({progress_pct:.1f}%)", file=sys.stderr, flush=True)
+    for img_info in tqdm(first_mod_images, desc=f"Processing {first_modality}", total=total_images, **tqdm_kwargs):
         case_id = f"{img_info['class'].lower()}_{img_info['image_id']}_{first_modality}"
         label = img_info['label']
         patient_id = extract_patient_id_from_img(img_info)
@@ -573,7 +572,12 @@ def main():
                 'modalities_used': [first_modality],
                 'prediction': prediction['prediction'],
                 'confidence': prediction['confidence'],
-                'label': label
+                'label': label,
+                'probabilities': prediction.get('probabilities', {}),
+                'probabilities_array': prediction.get('probabilities_array', []),
+                'probabilities_before_boosting': prediction.get('probabilities_before_boosting'),
+                'logits': prediction.get('logits', []),
+                'patient_id': patient_id
             })
         except Exception as e:
             print(f"Error processing {case_id} with {first_modality}: {e}", file=sys.stderr)
@@ -608,9 +612,9 @@ def main():
     # Summary of Step 1
     unique_patients_ct = len(patient_predictions)
     total_ct_predictions = sum(len(preds) for preds in patient_ct_predictions_list.values())
-    print(f"\n✓ Step 1 Complete: Processed {len(first_mod_images)} {first_modality} images")
-    print(f"  Stored {total_ct_predictions} {first_modality} slice predictions for {unique_patients_ct} unique patients")
-    print(f"  Aggregated to {unique_patients_ct} patient-level predictions using weighted voting")
+    print(f"\nStep 1 Complete: Processed {len(first_mod_images)} {first_modality} images", flush=True)
+    print(f"  Stored {total_ct_predictions} {first_modality} slice predictions for {unique_patients_ct} unique patients", flush=True)
+    print(f"  Aggregated to {unique_patients_ct} patient-level predictions using weighted voting", flush=True)
     
     if second_modality:
         print(f"\n{'='*60}")
@@ -643,13 +647,8 @@ def main():
         
         context_used_count = 0
         total_pet_images = len(filtered_second_mod_images)
-        pet_print_interval = max(100, total_pet_images // 20)  # Print every 5% or every 100 images
         
-        for idx, img_info in enumerate(tqdm(filtered_second_mod_images, desc=f"Processing {second_modality} with {first_modality} context", **tqdm_kwargs), 1):
-            # Print progress every N images
-            if idx % pet_print_interval == 0 or idx == total_pet_images:
-                progress_pct = (idx / total_pet_images) * 100
-                print(f"[Progress] Processed {idx}/{total_pet_images} {second_modality} images ({progress_pct:.1f}%)", file=sys.stderr, flush=True)
+        for img_info in tqdm(filtered_second_mod_images, desc=f"Processing {second_modality} with {first_modality} context", total=total_pet_images, **tqdm_kwargs):
             case_id = f"{img_info['class'].lower()}_{img_info['image_id']}_{second_modality}"
             label = img_info['label']
             patient_id = extract_patient_id_from_img(img_info)  # Use same extraction as Step 1
@@ -760,7 +759,12 @@ def main():
                     'confidence': prediction['confidence'],
                     'label': label,
                     'used_context': context_used,
-                    'context_from': [first_modality] if context_used else []
+                    'context_from': [first_modality] if context_used else [],
+                    'probabilities': prediction.get('probabilities', {}),
+                    'probabilities_array': prediction.get('probabilities_array', []),
+                    'probabilities_before_boosting': prediction.get('probabilities_before_boosting'),
+                    'logits': prediction.get('logits', []),
+                    'patient_id': patient_id
                 })
             except Exception as e:
                 print(f"Error processing {case_id} with {second_modality}: {e}", file=sys.stderr)
@@ -794,16 +798,138 @@ def main():
         
         total_pet_predictions = sum(len(preds) for preds in patient_pet_predictions_list.values())
         unique_patients_pet = len(patient_pet_predictions_list)
-        print(f"\n✓ Processed {context_used_count} {second_modality} images using {first_modality} context")
-        print(f"  Aggregated {total_pet_predictions} {second_modality} slice predictions to {unique_patients_pet} patient-level predictions")
+        print(f"\nProcessed {context_used_count} {second_modality} images using {first_modality} context", flush=True)
+        print(f"  Aggregated {total_pet_predictions} {second_modality} slice predictions to {unique_patients_pet} patient-level predictions", flush=True)
     
     # Evaluate results
-    print("\nEvaluating results...")
+    print("\nEvaluating results...", flush=True)
     if not results:
-        print("Warning: No results to evaluate. Check if images were processed successfully.", file=sys.stderr)
+        print("Warning: No results to evaluate. Check if images were processed successfully.", file=sys.stderr, flush=True)
         return
     
-    evaluation_results = evaluate_sequential_modalities(results, args.modalities)
+    try:
+        evaluation_results = evaluate_sequential_modalities(results, args.modalities)
+    except Exception as e:
+        print(f"ERROR: Failed to evaluate results: {e}", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        return
+    
+    # Add patient-level analysis if we have both modalities
+    if len(args.modalities) >= 2 and 'agreement_metrics' in evaluation_results:
+        try:
+            # Extract patient-level predictions for agreement analysis
+            patient_ct_preds = {}
+            patient_pet_preds = {}
+            
+            for case_id, case_results in results.items():
+                for result in case_results:
+                    patient_id = result.get('patient_id')
+                    if patient_id is None:
+                        continue
+                    
+                    mods_used = result.get('modalities_used', [])
+                    if len(mods_used) == 1:
+                        mod = mods_used[0]
+                        if mod == args.modalities[0]:
+                            if patient_id not in patient_ct_preds:
+                                patient_ct_preds[patient_id] = []
+                            patient_ct_preds[patient_id].append(result)
+                        elif mod == args.modalities[1]:
+                            if patient_id not in patient_pet_preds:
+                                patient_pet_preds[patient_id] = []
+                            patient_pet_preds[patient_id].append(result)
+            
+            # Aggregate to patient-level for agreement analysis
+            patient_level_ct = []
+            patient_level_pet = []
+            patient_ids_list = []
+            
+            for patient_id in set(list(patient_ct_preds.keys()) + list(patient_pet_preds.keys())):
+                if patient_id in patient_ct_preds and patient_id in patient_pet_preds:
+                    ct_slices = patient_ct_preds[patient_id]
+                    pet_slices = patient_pet_preds[patient_id]
+                    
+                    # Skip if either list is empty
+                    if not ct_slices or not pet_slices:
+                        continue
+                    
+                    # Aggregate CT predictions for this patient
+                    ct_aggregated = aggregate_patient_predictions(ct_slices)
+                    # Aggregate PET predictions for this patient
+                    pet_aggregated = aggregate_patient_predictions(pet_slices)
+                    
+                    # Add full prediction info for certainty analysis
+                    # For patient-level, use pre-boosting probabilities for realistic certainty metrics
+                    # For CT: use aggregated confidence (no boosting applied to CT)
+                    ct_conf = ct_aggregated['confidence']
+                    
+                    # For PET: calculate confidence from pre-boosting probabilities (shows real model behavior)
+                    # Aggregate pre-boosting probabilities across slices for this patient
+                    pet_probs_before_list = []
+                    for pet_slice in pet_slices:
+                        probs_before = pet_slice.get('probabilities_before_boosting')
+                        if probs_before is not None and len(probs_before) >= 2:
+                            pet_probs_before_list.append(np.array(probs_before))
+                    
+                    if pet_probs_before_list:
+                        # Average pre-boosting probabilities across slices
+                        avg_probs_before = np.mean(pet_probs_before_list, axis=0)
+                        pet_conf = float(np.max(avg_probs_before))
+                    else:
+                        # Fallback: use first slice's pre-boosting or aggregated confidence
+                        first_pet_slice = pet_slices[0]
+                        probs_before = first_pet_slice.get('probabilities_before_boosting')
+                        if probs_before is not None and len(probs_before) >= 2:
+                            pet_conf = float(np.max(np.array(probs_before)))
+                        else:
+                            pet_conf = pet_aggregated['confidence']
+                    
+                    ct_full = {
+                        'prediction': ct_aggregated['prediction'],
+                        'confidence': ct_conf,
+                        'probabilities': ct_slices[0].get('probabilities', {}),
+                        'probabilities_array': ct_slices[0].get('probabilities_array', []),
+                        'logits': ct_slices[0].get('logits', [])
+                    }
+                    pet_full = {
+                        'prediction': pet_aggregated['prediction'],
+                        'confidence': pet_conf,  # Use pre-boosting confidence
+                        'probabilities': pet_slices[0].get('probabilities', {}),
+                        'probabilities_array': pet_slices[0].get('probabilities_array', []),
+                        'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting'),
+                        'logits': pet_slices[0].get('logits', [])
+                    }
+                    
+                    patient_level_ct.append(ct_full)
+                    patient_level_pet.append(pet_full)
+                    patient_ids_list.append(patient_id)
+            
+            # Re-analyze agreement at patient level
+            if patient_level_ct and patient_level_pet:
+                patient_agreement = analyze_modality_agreement(
+                    patient_level_ct, 
+                    patient_level_pet, 
+                    patient_ids_list
+                )
+                evaluation_results['patient_level_agreement'] = patient_agreement
+            
+            # Analyze CT context influence on PET predictions
+            from src.utils.evaluation import analyze_ct_context_influence
+            pet_predictions_for_context = []
+            for case_id, case_results in results.items():
+                for result in case_results:
+                    mods_used = result.get('modalities_used', [])
+                    if len(mods_used) == 1 and mods_used[0] == args.modalities[1]:
+                        # This is a PET prediction
+                        if result.get('used_context', False):
+                            pet_predictions_for_context.append(result)
+            
+            if pet_predictions_for_context:
+                context_influence = analyze_ct_context_influence(pet_predictions_for_context)
+                evaluation_results['ct_context_influence'] = context_influence
+        except Exception as e:
+            print(f"Warning: Failed to complete patient-level analysis: {e}", file=sys.stderr, flush=True)
+            traceback.print_exc()
     
     # Print results
     print_evaluation_results(evaluation_results)
@@ -814,6 +940,7 @@ def main():
         f'results_{args.model_name.replace("/", "_")}.json'
     )
     save_results(evaluation_results, output_file)
+    print(f"\nEvaluation complete. Results saved to {output_file}", flush=True)
 
 
 if __name__ == '__main__':

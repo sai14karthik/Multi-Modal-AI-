@@ -53,7 +53,7 @@ class LLaVARunner:
         print(f"{'='*60}")
         
         if self.device == "cpu":
-            print("⚠️  WARNING: Running on CPU. LLaVA inference will be VERY SLOW (~10-15 min per image).")
+            print("WARNING: Running on CPU. LLaVA inference will be VERY SLOW (~10-15 min per image).")
             print("   Consider using GPU (--device cuda) or a faster model like CLIP for CPU testing.")
         
         # Get token from parameter or environment variable
@@ -111,7 +111,7 @@ class LLaVARunner:
             # Fallback to first available template
             self.conv_template = list(conv_templates.values())[0]
         
-        print("✅ Model loaded successfully!\n")
+        print("Model loaded successfully!\n")
 
     def _build_prompt(self, previous_predictions: Optional[Dict[str, Dict]] = None) -> str:
         first, second = self.class_names
