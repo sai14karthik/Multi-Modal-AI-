@@ -21,7 +21,7 @@ rsync -avz --progress \
   --exclude '.cache/' \
   --exclude '.env' \
   --exclude '.env.local' \
-  src/ \
+  src \
   requirements.txt \
   README.md \
   run.sh \
