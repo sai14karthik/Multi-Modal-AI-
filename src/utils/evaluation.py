@@ -621,6 +621,7 @@ def print_evaluation_results(evaluation_results: Dict):
                 # Fallback: use CT vs PET if CT+PET calculation failed
                 display_disagreement = disagreement_rate_ct_vs_pet
         else:
+            # Fallback for any other step names
             display_disagreement = disagreement_rate_ct_vs_pet
         
         cert_comparison[step_name] = {
