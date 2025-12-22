@@ -24,6 +24,13 @@ try:
 except ImportError:
     SIGLIP_AVAILABLE = False
 
+# Try to import OpenCLIP for BiomedCLIP models
+try:
+    import open_clip
+    OPENCLIP_AVAILABLE = True
+except ImportError:
+    OPENCLIP_AVAILABLE = False
+
 
 class MultimodalModelWrapper:
     """
@@ -69,7 +76,8 @@ class MultimodalModelWrapper:
         # Suppress stderr during model loading to hide verbose messages
         @contextlib.contextmanager
         def suppress_stderr():
-            with open(os.devnull, 'w') as devnull:
+            import os as os_module  # Use explicit import to avoid closure issues
+            with open(os_module.devnull, 'w') as devnull:
                 old_stderr = sys.stderr
                 try:
                     sys.stderr = devnull
@@ -96,15 +104,223 @@ class MultimodalModelWrapper:
                     self.processor = CLIPProcessor.from_pretrained(self.model_name, **token_kwargs)
             elif "biomedclip" in model_name.lower() or "biomed" in model_name.lower():
                 loaded = False
+                last_error = None
                 
-                try:
-                    with suppress_stderr():
-                        token_kwargs = {"token": self.hf_token} if self.hf_token else {}
-                        self.model = CLIPModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
-                        self.processor = CLIPProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
-                    loaded = True
-                except Exception:
-                    pass
+                # Attempt 1: Try downloading model files manually, then load with OpenCLIP
+                # This avoids the config.json issue by downloading files directly
+                if OPENCLIP_AVAILABLE:
+                    try:
+                        print(f"Attempting to load BiomedCLIP using OpenCLIP with manual download...")
+                        from huggingface_hub import snapshot_download
+                        import tempfile
+                        import os
+                        
+                        # Download model files to a temporary directory
+                        with suppress_stderr():
+                            token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                            cache_dir = snapshot_download(
+                                repo_id=model_name,
+                                allow_patterns=["*.bin", "*.pt", "*.safetensors", "*.json", "*.txt"],
+                                **token_kwargs
+                            )
+                            
+                            # Try loading with OpenCLIP using the downloaded files
+                            hf_model_name = f'hf-hub:{model_name}'
+                            openclip_model, preprocess_fn = open_clip.create_model_from_pretrained(
+                                hf_model_name
+                            )
+                            openclip_model = openclip_model.to(self.device)
+                            tokenizer_fn = open_clip.get_tokenizer(hf_model_name)
+                            
+                            # Create wrappers for compatibility
+                            class OpenCLIPWrapper:
+                                def __init__(self, preprocess, tokenizer, device):
+                                    self.preprocess = preprocess
+                                    self.tokenizer = tokenizer
+                                    self.device = device
+                                
+                                def __call__(self, text=None, images=None, return_tensors=None, padding=None, **kwargs):
+                                    result = {}
+                                    if images is not None:
+                                        if isinstance(images, Image.Image):
+                                            images = [images]
+                                        processed_images = torch.stack([self.preprocess(img) for img in images]).to(self.device)
+                                        result['pixel_values'] = processed_images
+                                    if text is not None:
+                                        if isinstance(text, str):
+                                            text = [text]
+                                        tokenized = self.tokenizer(text)
+                                        result['input_ids'] = tokenized.to(self.device)
+                                    return result
+                            
+                            class OpenCLIPModelWrapper:
+                                def __init__(self, model, tokenizer, device):
+                                    self.model = model
+                                    self.tokenizer = tokenizer
+                                    self.device = device
+                                
+                                def eval(self):
+                                    """Set model to evaluation mode."""
+                                    self.model.eval()
+                                    return self
+                                
+                                def __call__(self, pixel_values=None, input_ids=None, **kwargs):
+                                    image_features = self.model.encode_image(pixel_values)
+                                    text_features = self.model.encode_text(input_ids)
+                                    image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+                                    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+                                    logit_scale = self.model.logit_scale.exp()
+                                    logits_per_image = logit_scale * image_features @ text_features.t()
+                                    
+                                    class Output:
+                                        def __init__(self, logits):
+                                            self.logits_per_image = logits
+                                    
+                                    return Output(logits_per_image)
+                            
+                            self.processor = OpenCLIPWrapper(preprocess_fn, tokenizer_fn, self.device)
+                            self.model = OpenCLIPModelWrapper(openclip_model, tokenizer_fn, self.device)
+                            
+                        loaded = True
+                        print(f"✓ Successfully loaded BiomedCLIP using OpenCLIP: {model_name}")
+                    except Exception as e:
+                        last_error = str(e)
+                        print(f"OpenCLIP loading failed: {str(e)[:200]}")
+                
+                # Attempt 2: Try OpenCLIP directly (if manual download didn't work)
+                if not loaded and OPENCLIP_AVAILABLE:
+                    try:
+                        print(f"Attempting to load BiomedCLIP using OpenCLIP directly...")
+                        with suppress_stderr():
+                            hf_model_name = f'hf-hub:{model_name}'
+                            openclip_model, preprocess_fn = open_clip.create_model_from_pretrained(
+                                hf_model_name
+                            )
+                            openclip_model = openclip_model.to(self.device)
+                            tokenizer_fn = open_clip.get_tokenizer(hf_model_name)
+                            
+                            # Use the same wrapper classes as above
+                            class OpenCLIPWrapper:
+                                def __init__(self, preprocess, tokenizer, device):
+                                    self.preprocess = preprocess
+                                    self.tokenizer = tokenizer
+                                    self.device = device
+                                
+                                def __call__(self, text=None, images=None, return_tensors=None, padding=None, **kwargs):
+                                    result = {}
+                                    if images is not None:
+                                        if isinstance(images, Image.Image):
+                                            images = [images]
+                                        processed_images = torch.stack([self.preprocess(img) for img in images]).to(self.device)
+                                        result['pixel_values'] = processed_images
+                                    if text is not None:
+                                        if isinstance(text, str):
+                                            text = [text]
+                                        tokenized = self.tokenizer(text)
+                                        result['input_ids'] = tokenized.to(self.device)
+                                    return result
+                            
+                            class OpenCLIPModelWrapper:
+                                def __init__(self, model, tokenizer, device):
+                                    self.model = model
+                                    self.tokenizer = tokenizer
+                                    self.device = device
+                                
+                                def eval(self):
+                                    """Set model to evaluation mode."""
+                                    self.model.eval()
+                                    return self
+                                
+                                def __call__(self, pixel_values=None, input_ids=None, **kwargs):
+                                    image_features = self.model.encode_image(pixel_values)
+                                    text_features = self.model.encode_text(input_ids)
+                                    image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+                                    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+                                    logit_scale = self.model.logit_scale.exp()
+                                    logits_per_image = logit_scale * image_features @ text_features.t()
+                                    
+                                    class Output:
+                                        def __init__(self, logits):
+                                            self.logits_per_image = logits
+                                    
+                                    return Output(logits_per_image)
+                            
+                            self.processor = OpenCLIPWrapper(preprocess_fn, tokenizer_fn, self.device)
+                            self.model = OpenCLIPModelWrapper(openclip_model, tokenizer_fn, self.device)
+                            
+                        loaded = True
+                        print(f"✓ Successfully loaded BiomedCLIP using OpenCLIP (direct): {model_name}")
+                    except Exception as e:
+                        last_error = str(e)
+                        print(f"OpenCLIP direct loading failed: {str(e)[:200]}")
+                
+                # Attempt 3: Try downloading model files and creating config.json if missing
+                if not loaded:
+                    try:
+                        print(f"Attempting to load BiomedCLIP by downloading files and fixing config...")
+                        from huggingface_hub import snapshot_download
+                        import json
+                        import os
+                        
+                        with suppress_stderr():
+                            token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                            # Download all model files
+                            cache_dir = snapshot_download(
+                                repo_id=model_name,
+                                **token_kwargs
+                            )
+                            
+                            # Check if config.json exists, if not create a minimal one
+                            config_path = os.path.join(cache_dir, "config.json")
+                            if not os.path.exists(config_path):
+                                print(f"Creating minimal config.json for BiomedCLIP...")
+                                # Create a minimal CLIP config based on the model architecture
+                                minimal_config = {
+                                    "architectures": ["CLIPModel"],
+                                    "model_type": "clip",
+                                    "vision_config": {
+                                        "hidden_size": 768,
+                                        "intermediate_size": 3072,
+                                        "num_attention_heads": 12,
+                                        "num_hidden_layers": 12,
+                                        "patch_size": 16,
+                                        "image_size": 224
+                                    },
+                                    "text_config": {
+                                        "hidden_size": 768,
+                                        "intermediate_size": 3072,
+                                        "num_attention_heads": 12,
+                                        "num_hidden_layers": 12,
+                                        "vocab_size": 30522
+                                    },
+                                    "projection_dim": 512
+                                }
+                                with open(config_path, 'w') as f:
+                                    json.dump(minimal_config, f, indent=2)
+                                print(f"✓ Created config.json")
+                            
+                            # Now try loading with the fixed config
+                            token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                            self.model = CLIPModel.from_pretrained(cache_dir, **token_kwargs).to(self.device)
+                            self.processor = CLIPProcessor.from_pretrained(cache_dir, **token_kwargs)
+                            
+                        loaded = True
+                        print(f"✓ Successfully loaded BiomedCLIP with fixed config: {model_name}")
+                    except Exception as e:
+                        last_error = str(e)
+                        print(f"Config fix approach failed: {str(e)[:200]}")
+                
+                # Attempt 4: Try transformers CLIPModel (original approach)
+                if not loaded:
+                    try:
+                        with suppress_stderr():
+                            token_kwargs = {"token": self.hf_token} if self.hf_token else {}
+                            self.model = CLIPModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
+                            self.processor = CLIPProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
+                        loaded = True
+                        print(f"✓ Successfully loaded BiomedCLIP: {model_name}")
+                    except Exception as e:
+                        last_error = str(e)
                 
                 if not loaded:
                     try:
@@ -114,8 +330,9 @@ class MultimodalModelWrapper:
                             self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
                             self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                         loaded = True
-                    except Exception:
-                        pass
+                        print(f"✓ Successfully loaded BiomedCLIP using AutoModel: {model_name}")
+                    except Exception as e:
+                        last_error = str(e)
                 
                 if not loaded:
                     try:
@@ -130,30 +347,35 @@ class MultimodalModelWrapper:
                                 image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                                 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                                 
-                                class CombinedProcessor:
-                                    def __init__(self, image_processor, tokenizer):
-                                        self.image_processor = image_processor
-                                        self.tokenizer = tokenizer
-                                    def __call__(self, text=None, images=None, return_tensors=None, padding=None, **kwargs):
-                                        result = {}
-                                        if images is not None:
-                                            result.update(self.image_processor(images, return_tensors=return_tensors))
-                                        if text is not None:
-                                            text_result = self.tokenizer(text, return_tensors=return_tensors, padding=padding, **kwargs)
-                                            result.update(text_result)
-                                        return result
+                            class CombinedProcessor:
+                                def __init__(self, image_processor, tokenizer):
+                                    self.image_processor = image_processor
+                                    self.tokenizer = tokenizer
+                                def __call__(self, text=None, images=None, return_tensors=None, padding=None, **kwargs):
+                                    result = {}
+                                    if images is not None:
+                                        result.update(self.image_processor(images, return_tensors=return_tensors))
+                                    if text is not None:
+                                        text_result = self.tokenizer(text, return_tensors=return_tensors, padding=padding, **kwargs)
+                                        result.update(text_result)
+                                    return result
                                 
-                                self.processor = CombinedProcessor(image_processor, tokenizer)
+                            self.processor = CombinedProcessor(image_processor, tokenizer)
                         loaded = True
-                    except Exception:
-                        pass
+                        print(f"✓ Successfully loaded BiomedCLIP using AutoModel with CombinedProcessor: {model_name}")
+                    except Exception as e:
+                        last_error = str(e)
                 
                 if not loaded:
+                    print(f"⚠️  WARNING: Failed to load BiomedCLIP model: {model_name}")
+                    print(f"   Error: {last_error[:200] if last_error else 'Unknown error'}")
+                    print(f"   Falling back to default model: openai/clip-vit-large-patch14")
                     self.model_name = "openai/clip-vit-large-patch14"
                     with suppress_stderr():
                         token_kwargs = {"token": self.hf_token} if self.hf_token else {}
                         self.model = CLIPModel.from_pretrained(self.model_name, **token_kwargs).to(self.device)
                         self.processor = CLIPProcessor.from_pretrained(self.model_name, **token_kwargs)
+                    print(f"✓ Loaded fallback model: {self.model_name}")
             elif "metaclip" in model_name.lower() or "dfn" in model_name.lower():
                 # Meta MetaCLIP and Apple DFN models
                 loaded = False
@@ -500,12 +722,12 @@ class MultimodalModelWrapper:
             image = Image.blend(image, equalized_rgb, 0.4)
         else:
             # Standard preprocessing (balanced)
-            # Enhance contrast for medical images
+        # Enhance contrast for medical images
             enhancer = ImageEnhance.Contrast(image)
             image = enhancer.enhance(1.3)  # Increase contrast by 30%
-            # Enhance sharpness slightly
-            enhancer = ImageEnhance.Sharpness(image)
-            image = enhancer.enhance(1.1)
+        # Enhance sharpness slightly
+        enhancer = ImageEnhance.Sharpness(image)
+        image = enhancer.enhance(1.1)
         
         # Apply histogram equalization for better visibility
         # Convert to grayscale for histogram equalization
@@ -600,7 +822,15 @@ class MultimodalModelWrapper:
                 images=batch_images,
                 return_tensors="pt",
                 padding=True
-            ).to(self.device)
+            )
+            # OpenCLIPWrapper returns a dict with tensors already on device
+            # Transformers processors return objects that need .to(device)
+            if isinstance(inputs, dict):
+                # Already on device (OpenCLIP case)
+                pass
+            else:
+                # Move to device (transformers case)
+                inputs = inputs.to(self.device)
             
             with torch.no_grad():
                 outputs = self.model(**inputs)
@@ -652,10 +882,32 @@ class MultimodalModelWrapper:
             healthy_logits_swap = torch.stack(all_healthy_logits_swapped).mean()
             tumor_logits_swap = torch.stack(all_tumor_logits_swapped).mean()
         
-        # BiomedCLIP works better with direct strategy (no swap)
-        # For other models, try both and pick best
-        if self.is_biomedclip or not try_both_swaps:
-            # Use direct strategy (no swap)
+        # For BiomedCLIP, always try both strategies to handle potential logit order issues
+        # BiomedCLIP may have inverted logit order, so we test both and pick the best
+        if self.is_biomedclip:
+            # Try both strategies for BiomedCLIP and pick the one with higher confidence
+            # Direct strategy
+            safe_temperature = max(temperature, 1e-8)
+            class_logits_direct = torch.stack([healthy_logits_direct, tumor_logits_direct]) / safe_temperature
+            probs_direct = class_logits_direct.softmax(dim=-1)
+            confidence_direct = probs_direct.max().item()
+            
+            # Swapped strategy (may be needed if logits are inverted)
+            class_logits_swap = torch.stack([healthy_logits_swap, tumor_logits_swap]) / safe_temperature
+            probs_swap = class_logits_swap.softmax(dim=-1)
+            confidence_swap = probs_swap.max().item()
+            
+            # Use the strategy with higher confidence
+            if confidence_swap > confidence_direct:
+                probs = probs_swap
+                healthy_logits = healthy_logits_swap
+                tumor_logits = tumor_logits_swap
+            else:
+                probs = probs_direct
+                healthy_logits = healthy_logits_direct
+                tumor_logits = tumor_logits_direct
+        elif not try_both_swaps:
+            # Use direct strategy (no swap) - for models that don't need swap testing
             # Protect against division by zero
             safe_temperature = max(temperature, 1e-8)
             class_logits = torch.stack([healthy_logits_direct, tumor_logits_direct]) / safe_temperature
@@ -766,9 +1018,9 @@ class MultimodalModelWrapper:
                 # Apply boost ONLY to PET (not CT)
                 probs[pet_class_idx] = probs[pet_class_idx] * pet_boost_factor
                 # Do NOT boost CT when PET disagrees - this is key to improvement!
-            
-            # Renormalize probabilities after boosting
-            probs = probs / probs.sum()
+        
+        # Renormalize probabilities after boosting
+        probs = probs / probs.sum()
             
             # This strategy enables improvement:
             # 1. When PET agrees with CT: Massive boost locks in correct prediction

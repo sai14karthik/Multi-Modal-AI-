@@ -1,13 +1,14 @@
 #!/bin/bash
-# Test script to run with a few samples
-# Usage: ./test_with_samples.sh
+# Test BiomedCLIP with 3 samples locally
+# Usage: ./test_biomedclip_samples.sh
 
 echo "=================================================================================="
-echo "Testing Certainty Metrics with 3 Samples"
+echo "Testing BiomedCLIP with 3 Samples"
 echo "=================================================================================="
 echo ""
 echo "This will test:"
-echo "  - Model loading and inference"
+echo "  - BiomedCLIP model loading"
+echo "  - Model inference"
 echo "  - Certainty metrics calculation"
 echo "  - Modality agreement analysis"
 echo "  - CT context influence analysis"
@@ -26,18 +27,18 @@ if [ -d "venv" ]; then
     source venv/bin/activate
 fi
 
-# Run test with 3 samples using a small, fast model
-echo "Running test with openai/clip-vit-base-patch32 (small, fast model)..."
+# Run test with 3 samples using BiomedCLIP
+echo "Running test with microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224..."
 echo ""
 
 python3 -m src.main \
     --data_root data \
     --modalities CT PET \
     --model_arch clip \
-    --model_name openai/clip-vit-base-patch32 \
+    --model_name microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224 \
     --output_dir test_results \
     --batch_size 1 \
-    --max_samples 5 \
+    --max_samples 3 \
     --dataset_config data/dataset_config.yaml \
     --class_names high_grade low_grade \
     --temperature 0.8
@@ -62,6 +63,9 @@ if [ $EXIT_CODE -eq 0 ]; then
             echo ""
             echo "To view results:"
             echo "  cat test_results/results_*.json | python3 -m json.tool"
+            echo ""
+            echo "Check for BiomedCLIP warnings:"
+            echo "  grep -i 'warning.*biomedclip\|successfully loaded biomedclip\|fallback' <(python3 -m src.main --help 2>&1 || echo '')"
         else
             echo "WARNING: No result files found in test_results/"
         fi
@@ -77,6 +81,10 @@ else
     echo "  2. Dataset config exists: data/dataset_config.yaml"
     echo "  3. Python dependencies are installed"
     echo "  4. Model can be downloaded (requires internet)"
+    echo ""
+    echo "If BiomedCLIP fails to load, check the output for warnings about:"
+    echo "  - Missing config.json"
+    echo "  - Fallback to default model"
 fi
 
 echo ""

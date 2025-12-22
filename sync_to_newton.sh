@@ -36,6 +36,7 @@ rsync -avz --progress \
   submit_5_new_models.sh \
   test_quick.sh \
   sync_to_newton.sh \
+  verify_sync.sh \
   third_party/llava-med/llava/model/builder.py \
   sa808371@newton.ist.ucf.edu:~/Multi-Modal-AI/
 

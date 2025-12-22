@@ -58,7 +58,7 @@ except ImportError:
     # python-dotenv not installed, skip .env loading
     pass
 except Exception as e:
-    # Silently fail if .env loading has issues
+                # Silently fail if .env loading has issues
     pass
 
 import argparse
@@ -425,7 +425,11 @@ def main():
         # Select all available patients (52 patients with both CT and PET)
         # max_samples controls how many images per patient, not how many patients
         selected_patients = matched_patients
-        
+        print(f"\nFound {len(matched_patients)} patients with both {first_modality} and {second_modality} images", flush=True)
+        if args.max_samples is not None:
+            print(f"  Will take up to {args.max_samples} {first_modality} and {args.max_samples} {second_modality} images from each patient", flush=True)
+            print(f"  Expected total: ~{len(matched_patients) * args.max_samples} {first_modality} and ~{len(matched_patients) * args.max_samples} {second_modality} images", flush=True)
+    
         # For each selected patient, take images based on max_samples
         # If max_samples is None: take ALL images from each patient
         # If max_samples is specified: take up to max_samples CT and max_samples PET per patient
@@ -458,24 +462,24 @@ def main():
         first_mod_images = selected_first_mod
         second_mod_images = selected_second_mod
     else:
-        # Original behavior: shuffle and limit independently
+        # Original behavior: shuffle and limit independently (single modality case)
         random.seed(42)
         random.shuffle(first_mod_images)
         if second_modality:
             random.shuffle(second_mod_images)
         
+        # Only apply max_samples limit for single-modality case
+        # (For multi-modality, max_samples is already applied per patient above)
         if args.max_samples is not None and args.max_samples > 0:
             first_mod_images = first_mod_images[:args.max_samples]
             if second_modality:
                 second_mod_images = second_mod_images[:args.max_samples]
-    
-    print("\nRunning sequential modality evaluation...")
-    if second_modality:
-        print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
-        print(f"       2. {second_modality} ({len(second_mod_images)} instances) without {first_modality} context")
-        print(f"       3. {second_modality} ({len(second_mod_images)} instances) with {first_modality} context")
-    else:
-        print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
+        if second_modality:
+            print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
+            print(f"       2. {second_modality} ({len(second_mod_images)} instances) without {first_modality} context")
+            print(f"       3. {second_modality} ({len(second_mod_images)} instances) with {first_modality} context")
+        else:
+            print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
     
     results = {}
     # Store CT predictions by patient_id for sequential context
@@ -495,7 +499,10 @@ def main():
     total_images = len(first_mod_images)
     
     for img_info in tqdm(first_mod_images, desc=f"Processing {first_modality}", total=total_images, **tqdm_kwargs):
-        case_id = f"{img_info['class'].lower()}_{img_info['image_id']}_{first_modality}"
+        # Make case_id unique by including image_path (image_id may not be unique)
+        # Use basename of image_path to keep it readable but unique
+        image_basename = os.path.basename(img_info.get('image_path', ''))
+        case_id = f"{img_info['class'].lower()}_{image_basename}_{first_modality}"
         label = img_info['label']
         patient_id = extract_patient_id_from_img(img_info)
         
@@ -590,8 +597,8 @@ def main():
                 ct_result['image_id'] = img_info['image_id']
             results[case_id].append(ct_result)
         except Exception as e:
-            print(f"Error processing {case_id} with {first_modality}: {e}", file=sys.stderr)
-            traceback.print_exc()
+                print(f"Error processing {case_id} with {first_modality}: {e}", file=sys.stderr)
+                traceback.print_exc()
     
     # Aggregate predictions per patient for patient-level evaluation
     patient_aggregated_ct = {}
@@ -638,7 +645,9 @@ def main():
         total_pet_images = len(second_mod_images)
         
         for img_info in tqdm(second_mod_images, desc=f"Processing {second_modality} without {first_modality} context", total=total_pet_images, **tqdm_kwargs):
-            case_id = f"{img_info['class'].lower()}_{img_info['image_id']}_{second_modality}"
+            # Make case_id unique by including image_path (image_id may not be unique)
+            image_basename = os.path.basename(img_info.get('image_path', ''))
+            case_id = f"{img_info['class'].lower()}_{image_basename}_{second_modality}"
             label = img_info['label']
             patient_id = extract_patient_id_from_img(img_info)
             
@@ -688,9 +697,9 @@ def main():
                 
                 # Store PET prediction (without context) with slice_index for accurate matching
                 pet_result_no_context = {
-                    'modalities_used': [second_modality],
-                    'prediction': prediction['prediction'],
-                    'confidence': prediction['confidence'],
+                'modalities_used': [second_modality],
+                'prediction': prediction['prediction'],
+                'confidence': prediction['confidence'],
                     'label': label,
                     'used_context': False,  # NO CT context
                     'context_from': [],
@@ -705,11 +714,11 @@ def main():
                     pet_result_no_context['slice_index'] = img_info['slice_index']
                 if 'image_id' in img_info:
                     pet_result_no_context['image_id'] = img_info['image_id']
+                
                 results[case_id].append(pet_result_no_context)
             except Exception as e:
                 print(f"Error processing {case_id} with {second_modality} (no context): {e}", file=sys.stderr)
                 traceback.print_exc()
-        
         # Aggregate PET predictions per patient (without context)
         for patient_id, slices in patient_pet_predictions_list_no_context.items():
             if patient_id is None:
@@ -760,7 +769,9 @@ def main():
         total_pet_images = len(filtered_second_mod_images)
         
         for img_info in tqdm(filtered_second_mod_images, desc=f"Processing {second_modality} with {first_modality} context", total=total_pet_images, **tqdm_kwargs):
-            case_id = f"{img_info['class'].lower()}_{img_info['image_id']}_{second_modality}"
+            # Make case_id unique by including image_path (image_id may not be unique)
+            image_basename = os.path.basename(img_info.get('image_path', ''))
+            case_id = f"{img_info['class'].lower()}_{image_basename}_{second_modality}"
             label = img_info['label']
             patient_id = extract_patient_id_from_img(img_info)  # Use same extraction as Step 1
             
@@ -925,6 +936,28 @@ def main():
         print("Warning: No results to evaluate. Check if images were processed successfully.", file=sys.stderr, flush=True)
         return
     
+    # Debug: Count results by modality
+    total_results = sum(len(preds) for preds in results.values())
+    print(f"DEBUG: Total results entries: {len(results)} case_ids, {total_results} total predictions", flush=True)
+    
+    # Count by step type
+    ct_count = 0
+    pet_no_ctx_count = 0
+    pet_with_ctx_count = 0
+    for case_id, preds in results.items():
+        for pred in preds:
+            mods = pred.get('modalities_used', [])
+            used_ctx = pred.get('used_context', False)
+            ctx_from = pred.get('context_from', [])
+            if mods == [first_modality]:
+                ct_count += 1
+            elif mods == [second_modality] if second_modality else []:
+                if used_ctx and first_modality in ctx_from:
+                    pet_with_ctx_count += 1
+                else:
+                    pet_no_ctx_count += 1
+    print(f"DEBUG: CT={ct_count}, PET(no ctx)={pet_no_ctx_count}, PET(with ctx)={pet_with_ctx_count}", flush=True)
+    
     try:
         evaluation_results = evaluate_sequential_modalities(results, args.modalities)
     except Exception as e:
@@ -1051,8 +1084,16 @@ def main():
                 context_influence = analyze_ct_context_influence(pet_predictions_for_context)
                 evaluation_results['ct_context_influence'] = context_influence
         except Exception as e:
-            print(f"Warning: Failed to complete patient-level analysis: {e}", file=sys.stderr, flush=True)
-            traceback.print_exc()
+                print(f"Warning: Failed to complete patient-level analysis: {e}", file=sys.stderr, flush=True)
+                traceback.print_exc()
+    
+    # Debug: Check num_samples before saving
+    print("\nDEBUG BEFORE SAVE:", flush=True)
+    if 'step_results' in evaluation_results:
+        for step_name, step_data in evaluation_results['step_results'].items():
+            num_samples = step_data.get('num_samples', 'N/A')
+            cert_num_samples = step_data.get('certainty_metrics', {}).get('num_samples', 'N/A')
+            print(f"  {step_name}: num_samples={num_samples}, certainty_metrics.num_samples={cert_num_samples}", flush=True)
     
     # Print results
     print_evaluation_results(evaluation_results)

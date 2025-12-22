@@ -60,7 +60,7 @@ python3 -c "import tiktoken; import google.protobuf; import sentencepiece; print
 python3 -u -m src.main --data_root data --modalities CT PET --model_arch ${model_arch} --model_name ${model_name} --output_dir results --batch_size 8 --dataset_config data/dataset_config.yaml --class_names high_grade low_grade --temperature 0.8 --aggressive_preprocess
 EOF
     else
-        cat > "$JOB_SCRIPT" <<EOF
+    cat > "$JOB_SCRIPT" <<EOF
 #!/bin/bash
 #SBATCH --job-name=${job_name}
 #SBATCH --partition=normal

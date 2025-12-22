@@ -15,6 +15,7 @@ optimizing classification performance.
 """
 
 import numpy as np
+import sys
 from typing import List, Dict, Optional
 
 
@@ -253,6 +254,10 @@ def evaluate_sequential_modalities(
         combined_step_name = '+'.join(modalities)
         step_data[combined_step_name] = {'predictions': [], 'labels': [], 'full_predictions': []}  # PET with CT context
     
+    # Debug: Count predictions before categorization
+    total_results_count = sum(len(case_results) for case_results in results.values())
+    print(f"DEBUG evaluate_sequential_modalities: Processing {len(results)} case_ids with {total_results_count} total predictions", file=sys.stderr)
+    
     for case_id, case_results in results.items():
         for result in case_results:
             mods_used = result.get('modalities_used', [])
@@ -302,12 +307,44 @@ def evaluate_sequential_modalities(
                 step_data[step_name]['labels'].append(label)
                 step_data[step_name]['full_predictions'].append(result)  # Store full prediction dict
     
+    # Debug: Count predictions after categorization
+    for step_name, data in step_data.items():
+        print(f"DEBUG evaluate_sequential_modalities: {step_name} has {len(data['predictions'])} predictions", file=sys.stderr)
+    
     # Calculate accuracy and certainty metrics for each step
     step_results = {}
     for step_name, data in step_data.items():
         if len(data['predictions']) > 0:
-            acc = calculate_accuracy(data['predictions'], data['labels'])
-            num_predictions = len(data['predictions'])
+            # Debug: Check predictions and labels types/values
+            predictions = data['predictions']
+            labels = data['labels']
+            
+            # Ensure predictions and labels are integers
+            predictions = [int(p) if p is not None else 0 for p in predictions]
+            labels = [int(l) if l is not None else 0 for l in labels]
+            
+            # Debug: Check if CT and PET have same predictions/labels (suspicious)
+            if step_name in ['CT', 'PET']:
+                # Show first 10 predictions and labels for debugging
+                print(f"\nDEBUG {step_name} accuracy calculation:", file=sys.stderr)
+                print(f"  First 10 predictions: {predictions[:10]}", file=sys.stderr)
+                print(f"  First 10 labels: {labels[:10]}", file=sys.stderr)
+                # Count unique values
+                pred_counts = {}
+                label_counts = {}
+                for p in predictions:
+                    pred_counts[p] = pred_counts.get(p, 0) + 1
+                for l in labels:
+                    label_counts[l] = label_counts.get(l, 0) + 1
+                print(f"  Prediction counts: {pred_counts}", file=sys.stderr)
+                print(f"  Label counts: {label_counts}", file=sys.stderr)
+            
+            # Debug output for first few samples
+            if len(predictions) <= 5:
+                print(f"\nDEBUG {step_name}: predictions={predictions}, labels={labels}", file=sys.stderr)
+            
+            acc = calculate_accuracy(predictions, labels)
+            num_predictions = len(predictions)
             
             # Analyze certainty metrics
             certainty_metrics = analyze_certainty_metrics(data['full_predictions'], step_name)
@@ -497,6 +534,33 @@ def evaluate_sequential_modalities(
         uncertainty_effect_analysis = None
         multimodal_value_analysis = None
         multimodal_bias_analysis = None
+    
+    # Add disagreement rate to each modality's step_results for easier access
+    # This matches the format: | Modality | Avg confidence | Entropy | Disagreement rate |
+    if len(modalities) >= 2:
+        disagreement_rate_ct_vs_pet = 0.0
+        if agreement_metrics:
+            disagreement_rate_ct_vs_pet = agreement_metrics.get('disagreement_rate', 0.0)
+        
+        disagreement_rate_ct_vs_combined = None
+        if ct_vs_combined_agreement:
+            disagreement_rate_ct_vs_combined = ct_vs_combined_agreement.get('disagreement_rate', None)
+        
+        # Add disagreement rate to each modality
+        mod1 = modalities[0]
+        mod2 = modalities[1]
+        combined_mod_name = '+'.join(modalities)
+        
+        if mod1 in step_results:
+            step_results[mod1]['disagreement_rate'] = disagreement_rate_ct_vs_pet
+        if mod2 in step_results:
+            step_results[mod2]['disagreement_rate'] = disagreement_rate_ct_vs_pet
+        if combined_mod_name in step_results:
+            if disagreement_rate_ct_vs_combined is not None:
+                step_results[combined_mod_name]['disagreement_rate'] = disagreement_rate_ct_vs_combined
+            else:
+                # Fallback: use CT vs PET if CT+PET calculation failed
+                step_results[combined_mod_name]['disagreement_rate'] = disagreement_rate_ct_vs_pet
     
     return {
         'step_results': step_results,
@@ -2392,12 +2456,19 @@ def analyze_modality_combination_effect(
 def save_results(results: Dict, output_path: str):
     """Save evaluation results to file."""
     import json
+    import os
+    import sys
+    
+    # Ensure output directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     
     # Convert numpy types to Python types for JSON serialization
     def convert_to_serializable(obj):
-        if isinstance(obj, (np.integer, np.int_, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64)):
+        if isinstance(obj, (np.integer, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64)):
             return int(obj)
-        elif isinstance(obj, (np.floating, np.float_, np.float16, np.float32, np.float64)):
+        elif isinstance(obj, (np.floating, np.float16, np.float32, np.float64)):
             return float(obj)
         elif isinstance(obj, (np.bool_, bool)):
             return bool(obj)
@@ -2409,11 +2480,18 @@ def save_results(results: Dict, output_path: str):
             return [convert_to_serializable(item) for item in obj]
         elif isinstance(obj, tuple):
             return tuple(convert_to_serializable(item) for item in obj)
+        elif obj is None:
+            return None
         return obj
     
-    serializable_results = convert_to_serializable(results)
-    
-    with open(output_path, 'w') as f:
-        json.dump(serializable_results, f, indent=2)
-    
-    print(f"Results saved to {output_path}")
+    try:
+        serializable_results = convert_to_serializable(results)
+        
+        
+        with open(output_path, 'w') as f:
+            json.dump(serializable_results, f, indent=2)
+        
+        print(f"Results saved to {output_path}")
+    except Exception as e:
+        print(f"ERROR: Failed to save results to {output_path}: {e}", file=sys.stderr)
+        raise
