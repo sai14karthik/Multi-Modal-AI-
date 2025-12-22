@@ -2487,7 +2487,6 @@ def save_results(results: Dict, output_path: str):
     try:
         serializable_results = convert_to_serializable(results)
         
-        
         with open(output_path, 'w') as f:
             json.dump(serializable_results, f, indent=2)
         
