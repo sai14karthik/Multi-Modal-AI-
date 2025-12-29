@@ -117,6 +117,9 @@ from src.utils.evaluation import (
     analyze_patient_level_agreement
 )
 
+# Local toggle to silence debug messages from main script
+DEBUG_MAIN = False
+
 def main():
     parser = argparse.ArgumentParser(
         description="Sequential Modality Evaluation for Multimodal Models"
@@ -938,7 +941,8 @@ def main():
     
     # Debug: Count results by modality
     total_results = sum(len(preds) for preds in results.values())
-    print(f"DEBUG: Total results entries: {len(results)} case_ids, {total_results} total predictions", flush=True)
+    if DEBUG_MAIN:
+        print(f"DEBUG: Total results entries: {len(results)} case_ids, {total_results} total predictions", flush=True)
     
     # Count by step type
     ct_count = 0
@@ -956,7 +960,8 @@ def main():
                     pet_with_ctx_count += 1
                 else:
                     pet_no_ctx_count += 1
-    print(f"DEBUG: CT={ct_count}, PET(no ctx)={pet_no_ctx_count}, PET(with ctx)={pet_with_ctx_count}", flush=True)
+    if DEBUG_MAIN:
+        print(f"DEBUG: CT={ct_count}, PET(no ctx)={pet_no_ctx_count}, PET(with ctx)={pet_with_ctx_count}", flush=True)
     
     try:
         evaluation_results = evaluate_sequential_modalities(results, args.modalities)
@@ -1088,12 +1093,13 @@ def main():
                 traceback.print_exc()
     
     # Debug: Check num_samples before saving
-    print("\nDEBUG BEFORE SAVE:", flush=True)
-    if 'step_results' in evaluation_results:
-        for step_name, step_data in evaluation_results['step_results'].items():
-            num_samples = step_data.get('num_samples', 'N/A')
-            cert_num_samples = step_data.get('certainty_metrics', {}).get('num_samples', 'N/A')
-            print(f"  {step_name}: num_samples={num_samples}, certainty_metrics.num_samples={cert_num_samples}", flush=True)
+    if DEBUG_MAIN:
+        print("\nDEBUG BEFORE SAVE:", flush=True)
+        if 'step_results' in evaluation_results:
+            for step_name, step_data in evaluation_results['step_results'].items():
+                num_samples = step_data.get('num_samples', 'N/A')
+                cert_num_samples = step_data.get('certainty_metrics', {}).get('num_samples', 'N/A')
+                print(f"  {step_name}: num_samples={num_samples}, certainty_metrics.num_samples={cert_num_samples}", flush=True)
     
     # Print results
     print_evaluation_results(evaluation_results)
