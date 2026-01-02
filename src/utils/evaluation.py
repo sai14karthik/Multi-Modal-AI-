@@ -18,10 +18,6 @@ import numpy as np
 import sys
 from typing import List, Dict, Optional
 
-# Global toggles: disable verbose output
-DEBUG = False
-SHOW_CORE_RESEARCH_QUESTIONS = False
-
 
 def calculate_accuracy(
     predictions: List[int],
@@ -260,8 +256,7 @@ def evaluate_sequential_modalities(
     
     # Debug: Count predictions before categorization
     total_results_count = sum(len(case_results) for case_results in results.values())
-    if DEBUG:
-        print(f"DEBUG evaluate_sequential_modalities: Processing {len(results)} case_ids with {total_results_count} total predictions", file=sys.stderr)
+    print(f"DEBUG evaluate_sequential_modalities: Processing {len(results)} case_ids with {total_results_count} total predictions", file=sys.stderr)
     
     for case_id, case_results in results.items():
         for result in case_results:
@@ -314,8 +309,7 @@ def evaluate_sequential_modalities(
     
     # Debug: Count predictions after categorization
     for step_name, data in step_data.items():
-        if DEBUG:
-            print(f"DEBUG evaluate_sequential_modalities: {step_name} has {len(data['predictions'])} predictions", file=sys.stderr)
+        print(f"DEBUG evaluate_sequential_modalities: {step_name} has {len(data['predictions'])} predictions", file=sys.stderr)
     
     # Calculate accuracy and certainty metrics for each step
     step_results = {}
@@ -332,24 +326,22 @@ def evaluate_sequential_modalities(
             # Debug: Check if CT and PET have same predictions/labels (suspicious)
             if step_name in ['CT', 'PET']:
                 # Show first 10 predictions and labels for debugging
-                if DEBUG:
-                    print(f"\nDEBUG {step_name} accuracy calculation:", file=sys.stderr)
-                    print(f"  First 10 predictions: {predictions[:10]}", file=sys.stderr)
-                    print(f"  First 10 labels: {labels[:10]}", file=sys.stderr)
-                    # Count unique values
-                    pred_counts = {}
-                    label_counts = {}
-                    for p in predictions:
-                        pred_counts[p] = pred_counts.get(p, 0) + 1
-                    for l in labels:
-                        label_counts[l] = label_counts.get(l, 0) + 1
-                    print(f"  Prediction counts: {pred_counts}", file=sys.stderr)
-                    print(f"  Label counts: {label_counts}", file=sys.stderr)
+                print(f"\nDEBUG {step_name} accuracy calculation:", file=sys.stderr)
+                print(f"  First 10 predictions: {predictions[:10]}", file=sys.stderr)
+                print(f"  First 10 labels: {labels[:10]}", file=sys.stderr)
+                # Count unique values
+                pred_counts = {}
+                label_counts = {}
+                for p in predictions:
+                    pred_counts[p] = pred_counts.get(p, 0) + 1
+                for l in labels:
+                    label_counts[l] = label_counts.get(l, 0) + 1
+                print(f"  Prediction counts: {pred_counts}", file=sys.stderr)
+                print(f"  Label counts: {label_counts}", file=sys.stderr)
             
             # Debug output for first few samples
             if len(predictions) <= 5:
-                if DEBUG:
-                    print(f"\nDEBUG {step_name}: predictions={predictions}, labels={labels}", file=sys.stderr)
+                print(f"\nDEBUG {step_name}: predictions={predictions}, labels={labels}", file=sys.stderr)
             
             acc = calculate_accuracy(predictions, labels)
             num_predictions = len(predictions)
@@ -593,9 +585,16 @@ def print_evaluation_results(evaluation_results: Dict):
     not on optimizing classification accuracy. In zero-shot settings, accuracy near
     chance is expected; what matters is how certainty changes with modality combinations.
     """
-    # NOTE: Removed verbose CORE RESEARCH QUESTIONS header to keep output minimal.
-    # The user requested only the four tables: PRIMARY CERTAINTY TABLE,
-    # DETAILED CERTAINTY METRICS, LOGIT DISTRIBUTION SIMILARITY, and ACCURACY.
+    print("\n" + "="*80)
+    print("CORE RESEARCH QUESTIONS: Zero-Shot Multimodal VLM Behavior Analysis")
+    print("="*80)
+    print("\nThis analysis addresses fundamental questions about zero-shot VLMs:")
+    print("1. Does PET certainty increase when CT context is integrated?")
+    print("2. Does PET consistently produce higher confidence than CT?")
+    print("3. Does multimodality reduce uncertainty or introduce conflicting signals?")
+    print("4. Can zero-shot VLMs reflect the 'value' of multimodal clinical imaging?")
+    print("\nNote: Accuracy near chance is expected in zero-shot settings.")
+    print("="*80)
     
     step_results = evaluation_results.get('step_results', {})
     modalities = evaluation_results.get('modalities', [])
@@ -736,10 +735,377 @@ def print_evaluation_results(evaluation_results: Dict):
         else:
             print("  → LOW similarity: Different logit distributions across modalities")
     
+    # Analyze confidence differences
+    if len(cert_comparison) >= 2:
+        print("\n" + "-"*80)
+        print("CONFIDENCE DIFFERENCES (Key Behavior Indicator)")
+        print("-"*80)
+        mod_names = sorted(cert_comparison.keys())
+        if len(mod_names) >= 2:
+            mod1, mod2 = mod_names[0], mod_names[1]
+            conf_diff = cert_comparison[mod2]['avg_conf'] - cert_comparison[mod1]['avg_conf']
+            print(f"{mod2} vs {mod1} confidence difference: {conf_diff:+.4f}")
+            if conf_diff > 0.05:
+                print(f"  → {mod2} produces HIGHER confidence than {mod1}")
+            elif conf_diff < -0.05:
+                print(f"  → {mod2} produces LOWER confidence than {mod1}")
+            else:
+                print(f"  → Similar confidence levels between {mod1} and {mod2}")
+    
+    # Analyze modality agreement and its effect on certainty
+    if agreement_metrics:
+        print("\n" + "-"*80)
+        print("MODALITY AGREEMENT & CERTAINTY EFFECTS")
+        print("-"*80)
+        disagreement_rate = agreement_metrics.get('disagreement_rate', 0.0)
+        print(f"Disagreement rate: {disagreement_rate:.4f} ({disagreement_rate*100:.1f}% of cases)")
+        
+        # Analyze how disagreement affects confidence
+        disagreement_conf_analysis = agreement_metrics.get('disagreement_confidence_analysis', {})
+        if disagreement_conf_analysis:
+            print("\nConfidence when modalities DISAGREE:")
+            avg_ct_conf_disagree = disagreement_conf_analysis.get('avg_ct_confidence_when_disagree', 0.0)
+            avg_pet_conf_disagree = disagreement_conf_analysis.get('avg_pet_confidence_when_disagree', 0.0)
+            avg_conf_agree = disagreement_conf_analysis.get('avg_confidence_when_agree', 0.0)
+            conf_drop = disagreement_conf_analysis.get('confidence_drop_on_disagreement', 0.0)
+            
+            if avg_ct_conf_disagree > 0 or avg_pet_conf_disagree > 0:
+                print(f"  CT confidence when disagreeing: {avg_ct_conf_disagree:.4f}")
+                print(f"  PET confidence when disagreeing: {avg_pet_conf_disagree:.4f}")
+                if avg_conf_agree > 0:
+                    print(f"  Average confidence when agreeing: {avg_conf_agree:.4f}")
+                    print(f"  Confidence drop on disagreement: {conf_drop:.4f}")
+                    if conf_drop > 0.05:
+                        print(f"    → Disagreement leads to LOWER confidence (model uncertainty)")
+                    elif conf_drop < -0.05:
+                        print(f"    → Disagreement leads to HIGHER confidence (unexpected)")
+                    else:
+                        print(f"    → Disagreement has minimal effect on confidence")
+        
+        # Analyze logit stability when modalities disagree
+        disagreement_logit_analysis = agreement_metrics.get('disagreement_logit_analysis', {})
+        if disagreement_logit_analysis:
+            print("\nLogit stability when modalities DISAGREE:")
+            logit_variance = disagreement_logit_analysis.get('avg_logit_variance_ct_when_disagree', 0.0)
+            instability = disagreement_logit_analysis.get('logit_instability_indicator', 0.0)
+            if logit_variance > 0:
+                print(f"  Average logit variance when disagreeing: {instability:.4f}")
+                if instability > 1.0:
+                    print(f"    → HIGH variance: Unstable logits when modalities disagree")
+                elif instability < 0.5:
+                    print(f"    → LOW variance: Stable logits even when modalities disagree")
+                else:
+                    print(f"    → MODERATE variance: Some instability when modalities disagree")
+    
+    # Analyze how combining modalities affects certainty
+    if combination_analysis:
+        print("\n" + "-"*80)
+        print("MODALITY COMBINATION EFFECTS")
+        print("-"*80)
+        conf_change = combination_analysis.get('confidence_change', 0.0)
+        entropy_change = combination_analysis.get('entropy_change', 0.0)
+        conf_effect = combination_analysis.get('confidence_effect', '')
+        entropy_effect = combination_analysis.get('entropy_effect', '')
+        
+        print(f"Combined modality confidence: {combination_analysis.get('combined_confidence', 0.0):.4f}")
+        print(f"Average single-modality confidence: {combination_analysis.get('average_single_modality_confidence', 0.0):.4f}")
+        print(f"Confidence change: {conf_change:+.4f}")
+        print(f"  → Combining modalities {conf_effect.lower().replace('_', ' ')} confidence")
+        
+        print(f"\nCombined modality entropy: {combination_analysis.get('combined_entropy', 0.0):.4f}")
+        print(f"Average single-modality entropy: {combination_analysis.get('average_single_modality_entropy', 0.0):.4f}")
+        print(f"Entropy change: {entropy_change:+.4f}")
+        print(f"  → Combining modalities {entropy_effect.lower().replace('_', ' ')}")
+        
+        interpretation = combination_analysis.get('interpretation', '')
+        if interpretation:
+            print(f"\nSummary: {interpretation}")
+    
+    # CORE RESEARCH QUESTION 1: Does PET certainty increase when CT context is integrated?
+    if ct_context_influence:
+        print("\n" + "="*80)
+        print("CORE RESEARCH QUESTION 1: CT Context Integration Effect")
+        print("="*80)
+        print("Does PET certainty increase when CT context is integrated, or does model ignore CT?")
+        print("-"*80)
+        
+        conf_change = ct_context_influence.get('avg_confidence_change', 0.0)
+        entropy_change = ct_context_influence.get('avg_entropy_change', 0.0)
+        context_used = ct_context_influence.get('context_used', False)
+        significant_increases = ct_context_influence.get('significant_confidence_increases', 0)
+        total_samples = ct_context_influence.get('num_samples', 0)
+        
+        print(f"Average confidence change with CT context: {conf_change:+.4f}")
+        print(f"Average entropy change: {entropy_change:+.4f}")
+        print(f"Significant increases (>5%): {significant_increases}/{total_samples}")
+        
+        if context_used:
+            print(f"\n✓ CT CONTEXT IS BEING USED")
+            print(f"   PET certainty {'INCREASES' if conf_change > 0 else 'DECREASES'} when CT context is integrated")
+            if conf_change > 0.02:
+                print(f"   → Strong evidence of CT context integration")
+            elif conf_change > 0:
+                print(f"   → Moderate evidence of CT context integration")
+        else:
+            print(f"\n⚠️  CT CONTEXT APPEARS TO BE IGNORED")
+            print(f"   Model may not be effectively using CT context in PET predictions")
+        
+        interpretation = ct_context_influence.get('interpretation', '')
+        if interpretation:
+            print(f"\n{interpretation}")
+    
+    # CORE RESEARCH QUESTION 2: Does PET consistently produce higher confidence than CT?
+    if pet_vs_ct:
+        print("\n" + "="*80)
+        print("CORE RESEARCH QUESTION 2: PET vs CT Confidence Comparison")
+        print("="*80)
+        print("Does PET consistently produce higher confidence than CT?")
+        # Check if we're comparing CT+PET or PET alone
+        combined_mod_name = '+'.join(modalities)
+        if combined_mod_name in step_results and step_results[combined_mod_name].get('num_samples', 0) > 0:
+            print("(Note: Comparing CT+PET (PET with CT context) vs CT alone)")
+        else:
+            print("(Note: Comparing PET (alone, without CT context) vs CT alone)")
+        print("-"*80)
+        
+        pet_dominance_rate = pet_vs_ct.get('pet_higher_confidence_rate', 0.0)
+        avg_conf_diff = pet_vs_ct.get('avg_confidence_difference', 0.0)
+        consistent_dominance = pet_vs_ct.get('consistent_pet_dominance', False)
+        num_pairs = pet_vs_ct.get('num_pairs', 0)
+        
+        print(f"PET has higher confidence in {pet_dominance_rate*100:.1f}% of cases")
+        print(f"Average confidence difference (PET - CT): {avg_conf_diff:+.4f}")
+        print(f"Number of matched pairs: {num_pairs}")
+        
+        if consistent_dominance:
+            print(f"\n✓ PET CONSISTENTLY DOMINATES CT")
+            print(f"   Strong evidence that PET produces higher confidence systematically")
+        elif pet_dominance_rate > 0.5:
+            print(f"\n→ PET shows moderate dominance over CT")
+        else:
+            print(f"\n→ No clear dominance pattern between PET and CT")
+        
+        interpretation = pet_vs_ct.get('interpretation', '')
+        if interpretation:
+            print(f"\n{interpretation}")
+    
+    # CORE RESEARCH QUESTION 3: Does multimodality reduce uncertainty or introduce conflict?
+    # Note: In CT→PET sequential approach, we analyze PET (with CT context) vs CT (alone)
+    if uncertainty_effect:
+        print("\n" + "="*80)
+        print("CORE RESEARCH QUESTION 3: Multimodality Uncertainty Effect")
+        print("="*80)
+        print("Does multimodality reduce uncertainty or introduce conflicting signals?")
+        print("(Analyzing: PET with CT context vs CT alone)")
+        print("-"*80)
+        
+        uncertainty_reduction_rate = uncertainty_effect.get('uncertainty_reduction_rate', 0.0)
+        conflict_introduction_rate = uncertainty_effect.get('conflict_introduction_rate', 0.0)
+        avg_entropy_change = uncertainty_effect.get('avg_entropy_change', 0.0)
+        avg_conf_change = uncertainty_effect.get('avg_confidence_change', 0.0)
+        multimodal_value_type = uncertainty_effect.get('multimodal_value', 'UNKNOWN')
+        num_triplets = uncertainty_effect.get('num_triplets', 0)
+        
+        if num_triplets == 0:
+            # Fallback: Compare CT vs PET entropy/confidence directly
+            if len(step_results) >= 2:
+                ct_metrics = step_results.get(modalities[0], {}).get('certainty_metrics', {})
+                pet_metrics = step_results.get(modalities[1], {}).get('certainty_metrics', {})
+                
+                ct_entropy = ct_metrics.get('avg_entropy', 0.0)
+                pet_entropy = pet_metrics.get('avg_entropy', 0.0)
+                ct_conf = ct_metrics.get('avg_confidence', 0.0)
+                pet_conf = pet_metrics.get('avg_confidence', 0.0)
+                
+                entropy_change = pet_entropy - ct_entropy
+                conf_change = pet_conf - ct_conf
+                
+                print(f"CT (alone) entropy: {ct_entropy:.4f}, confidence: {ct_conf:.4f}")
+                print(f"PET (with CT context) entropy: {pet_entropy:.4f}, confidence: {pet_conf:.4f}")
+                print(f"Entropy change (PET - CT): {entropy_change:+.4f}")
+                print(f"Confidence change (PET - CT): {conf_change:+.4f}")
+                
+                if entropy_change < -0.1 and conf_change > 0.02:
+                    print(f"\n✓ MULTIMODALITY (CT context) REDUCES UNCERTAINTY")
+                    print(f"   PET with CT context shows lower entropy and higher confidence")
+                elif entropy_change > 0.1 or conf_change < -0.02:
+                    print(f"\n⚠️  MULTIMODALITY INTRODUCES CONFLICT/UNCERTAINTY")
+                    print(f"   PET with CT context shows higher entropy or lower confidence")
+                else:
+                    print(f"\n→ MULTIMODALITY HAS NEUTRAL EFFECT")
+                    print(f"   CT context has minimal impact on PET uncertainty")
+        else:
+            print(f"Uncertainty reduction rate: {uncertainty_reduction_rate*100:.1f}%")
+            print(f"Conflict introduction rate: {conflict_introduction_rate*100:.1f}%")
+            print(f"Average entropy change: {avg_entropy_change:+.4f}")
+            print(f"Average confidence change: {avg_conf_change:+.4f}")
+            print(f"Number of cases: {num_triplets}")
+            
+            if multimodal_value_type == 'REDUCES_UNCERTAINTY':
+                print(f"\n✓ MULTIMODALITY REDUCES UNCERTAINTY")
+                print(f"   Combining modalities provides complementary information")
+            elif multimodal_value_type == 'INTRODUCES_CONFLICT':
+                print(f"\n⚠️  MULTIMODALITY INTRODUCES CONFLICT")
+                print(f"   Combining modalities creates conflicting signals")
+            else:
+                print(f"\n→ MULTIMODALITY HAS NEUTRAL EFFECT")
+                print(f"   Combining modalities has minimal impact on uncertainty")
+            
+            interpretation = uncertainty_effect.get('interpretation', '')
+            if interpretation:
+                print(f"\n{interpretation}")
+    
+    # CORE RESEARCH QUESTION 4: Can zero-shot VLMs reflect multimodal value?
+    # Note: In CT→PET sequential approach, we analyze how PET benefits from CT context
+    if multimodal_value:
+        print("\n" + "="*80)
+        print("CORE RESEARCH QUESTION 4: Zero-Shot VLM Multimodal Value")
+        print("="*80)
+        print("Can zero-shot VLMs reflect the 'value' of multimodal clinical imaging?")
+        print("(Analyzing: How PET predictions benefit from CT context)")
+        print("-"*80)
+        
+        value_demonstrated = multimodal_value.get('multimodal_value_demonstrated', False)
+        agreement_benefit = multimodal_value.get('agreement_benefit', 0.0)
+        disagreement_uncertainty = multimodal_value.get('disagreement_uncertainty', 0.0)
+        disagreement_handling = multimodal_value.get('disagreement_handling', 'UNKNOWN')
+        information_integration_rate = multimodal_value.get('information_integration_rate', 0.0)
+        num_agreement = multimodal_value.get('num_agreement_cases', 0)
+        num_disagreement = multimodal_value.get('num_disagreement_cases', 0)
+        
+        if num_agreement == 0 and num_disagreement == 0:
+            # Fallback: Analyze based on CT context influence and PET vs CT comparison
+            if ct_context_influence and pet_vs_ct:
+                conf_increase = ct_context_influence.get('avg_confidence_change', 0.0)
+                entropy_decrease = ct_context_influence.get('avg_entropy_change', 0.0)
+                pet_dominance = pet_vs_ct.get('consistent_pet_dominance', False)
+                
+                print(f"Evidence of multimodal value:")
+                print(f"  1. CT context integration: Confidence change {conf_increase:+.4f}, Entropy change {entropy_decrease:+.4f}")
+                print(f"  2. PET vs CT: {'PET consistently dominates' if pet_dominance else 'No clear dominance'}")
+                
+                # Assess multimodal value based on CT context effect
+                if conf_increase > 0.02 and entropy_decrease < -0.1:
+                    print(f"\n✓ ZERO-SHOT VLM DEMONSTRATES MULTIMODAL VALUE")
+                    print(f"   Model shows understanding through:")
+                    print(f"   - Increased PET certainty when CT context is integrated")
+                    print(f"   - Reduced uncertainty (lower entropy) with multimodal information")
+                    if pet_dominance:
+                        print(f"   - PET systematically benefits from having CT context")
+                elif conf_increase > 0:
+                    print(f"\n→ MODERATE EVIDENCE OF MULTIMODAL VALUE")
+                    print(f"   Some benefit from CT context, but limited")
+                else:
+                    print(f"\n⚠️  LIMITED EVIDENCE OF MULTIMODAL VALUE")
+                    print(f"   CT context may not be effectively utilized")
+        else:
+            print(f"When modalities AGREE:")
+            print(f"  Confidence benefit: {agreement_benefit:+.4f}")
+            print(f"  Number of cases: {num_agreement}")
+            
+            print(f"\nWhen modalities DISAGREE:")
+            print(f"  Uncertainty handling: {disagreement_uncertainty:+.4f}")
+            print(f"  Handling quality: {disagreement_handling.replace('_', ' ')}")
+            print(f"  Number of cases: {num_disagreement}")
+            
+            print(f"\nInformation integration rate: {information_integration_rate*100:.1f}%")
+            
+            if value_demonstrated:
+                print(f"\n✓ ZERO-SHOT VLM DEMONSTRATES MULTIMODAL VALUE")
+                print(f"   Model shows understanding of multimodal clinical imaging value:")
+                print(f"   - Benefits from agreement (higher confidence)")
+                print(f"   - Handles disagreement appropriately (shows uncertainty)")
+                print(f"   - Integrates information from both modalities")
+            else:
+                print(f"\n⚠️  LIMITED EVIDENCE OF MULTIMODAL VALUE")
+                print(f"   Model may not fully reflect the value of multimodal imaging")
+            
+            interpretation = multimodal_value.get('interpretation', '')
+            if interpretation:
+                print(f"\n{interpretation}")
+    
+    # PATIENT-LEVEL ANALYSIS
+    if patient_level_agreement:
+        print("\n" + "-"*80)
+        print("PATIENT-LEVEL vs SLICE-LEVEL AGREEMENT")
+        print("-"*80)
+        patient_agreement_rate = patient_level_agreement.get('patient_level_agreement_rate', 0.0)
+        slice_agreement_rate = patient_level_agreement.get('slice_level_agreement_rate', 0.0)
+        improvement = patient_level_agreement.get('agreement_improvement', 0.0)
+        num_patients = patient_level_agreement.get('num_patients', 0)
+        
+        print(f"Slice-level agreement: {slice_agreement_rate:.4f}")
+        print(f"Patient-level agreement: {patient_agreement_rate:.4f}")
+        print(f"Change: {improvement:+.4f} ({improvement*100:+.1f}%)")
+        print(f"Number of patients: {num_patients}")
+        
+        if improvement > 0.05:
+            print("  → Patient-level aggregation INCREASES agreement significantly")
+        elif improvement < -0.05:
+            print("  → Patient-level aggregation DECREASES agreement")
+        else:
+            print("  → Patient-level aggregation has minimal effect on agreement")
+    
+    # PET DOMINANCE ANALYSIS
+    if pet_dominance:
+        print("\n" + "-"*80)
+        print("PET DOMINANCE ANALYSIS")
+        print("-"*80)
+        pet_dominance_rate = pet_dominance.get('pet_higher_confidence_rate', 0.0)
+        avg_conf_diff = pet_dominance.get('avg_confidence_difference', 0.0)
+        systematic_bias = pet_dominance.get('systematic_pet_bias', False)
+        pet_wins_disagree = pet_dominance.get('pet_wins_when_disagree', 0)
+        ct_wins_disagree = pet_dominance.get('ct_wins_when_disagree', 0)
+        
+        print(f"PET has higher confidence in {pet_dominance_rate*100:.1f}% of cases")
+        print(f"Average confidence difference (PET - CT): {avg_conf_diff:+.4f}")
+        print(f"When modalities disagree:")
+        print(f"  PET wins (higher confidence): {pet_wins_disagree} cases")
+        print(f"  CT wins (higher confidence): {ct_wins_disagree} cases")
+        
+        if systematic_bias:
+            print(f"\n⚠️  SYSTEMATIC PET BIAS DETECTED")
+            print(f"   PET consistently dominates CT predictions")
+        else:
+            print(f"\n✓ No systematic PET bias detected")
+        
+        interpretation = pet_dominance.get('interpretation', '')
+        if interpretation:
+            print(f"\n{interpretation}")
+    
+    # MULTIMODAL BIAS ANALYSIS
+    if multimodal_bias:
+        print("\n" + "-"*80)
+        print("MULTIMODAL PREDICTION ANALYSIS: True Combination vs PET Bias")
+        print("-"*80)
+        matches_pet_rate = multimodal_bias.get('combined_matches_pet_rate', 0.0)
+        matches_ct_rate = multimodal_bias.get('combined_matches_ct_rate', 0.0)
+        pet_bias_score = multimodal_bias.get('pet_bias_score', 0.0)
+        true_combination_rate = multimodal_bias.get('true_combination_rate', 0.0)
+        simple_pet_bias = multimodal_bias.get('simple_pet_bias', False)
+        
+        print(f"Combined predictions match PET: {matches_pet_rate*100:.1f}%")
+        print(f"Combined predictions match CT: {matches_ct_rate*100:.1f}%")
+        print(f"PET bias score (matches PET when CT≠PET): {pet_bias_score*100:.1f}%")
+        print(f"True combination rate: {true_combination_rate*100:.1f}%")
+        
+        if simple_pet_bias:
+            print(f"\n⚠️  SIMPLE PET BIAS DETECTED")
+            print(f"   Combined predictions appear to simply follow PET, not true combination")
+        else:
+            print(f"\n✓ Appears to be TRUE COMBINATION")
+            print(f"   Combined predictions reflect integration of both modalities")
+        
+        interpretation = multimodal_bias.get('interpretation', '')
+        if interpretation:
+            print(f"\n{interpretation}")
+    
     # SECONDARY: Accuracy (for reference only)
     print("\n" + "-"*80)
-    print("ACCURACY")
-    print("-"*80)    # Use same custom sort order: CT, PET, CT+PET
+    print("ACCURACY (Reference Only - Not Primary Focus)")
+    print("-"*80)
+    print("Note: In zero-shot settings, accuracy near chance (0.5) is expected.")
+    # Use same custom sort order: CT, PET, CT+PET
     sorted_steps = sorted(step_results.keys(), key=get_step_order)
     for step_name in sorted_steps:
         step_data = step_results[step_name]
@@ -1109,7 +1475,7 @@ def analyze_modality_agreement(
         matched_pairs = list(zip(ct_predictions[:min_len], pet_predictions[:min_len]))
     
     if not matched_pairs:
-        if DEBUG and debug:
+        if debug:
             print(f"DEBUG: No matched pairs found. CT predictions: {len(ct_predictions)}, PET predictions: {len(pet_predictions)}")
         return {
             'agreement_rate': 0.0,
@@ -1121,7 +1487,7 @@ def analyze_modality_agreement(
             'disagreement_logit_analysis': {}
         }
     
-#    if DEBUG and debug:
+    if debug:
         print(f"\nDEBUG: analyze_modality_agreement - Found {len(matched_pairs)} matched pairs")
         print(f"DEBUG: First few CT predictions: {[p.get('prediction') for p in ct_predictions[:5]]}")
         print(f"DEBUG: First few PET predictions: {[p.get('prediction') for p in pet_predictions[:5]]}")

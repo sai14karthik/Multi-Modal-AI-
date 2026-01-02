@@ -113,7 +113,6 @@ class MultimodalModelWrapper:
                         print(f"Attempting to load BiomedCLIP using OpenCLIP with manual download...")
                         from huggingface_hub import snapshot_download
                         import tempfile
-                        import os
                         
                         # Download model files to a temporary directory
                         with suppress_stderr():
@@ -260,7 +259,6 @@ class MultimodalModelWrapper:
                         print(f"Attempting to load BiomedCLIP by downloading files and fixing config...")
                         from huggingface_hub import snapshot_download
                         import json
-                        import os
                         
                         with suppress_stderr():
                             token_kwargs = {"token": self.hf_token} if self.hf_token else {}
