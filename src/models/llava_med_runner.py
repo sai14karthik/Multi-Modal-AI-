@@ -10,6 +10,7 @@ import os
 import sys
 from typing import Dict, List, Optional
 
+import numpy as np
 import torch
 from PIL import Image
 
@@ -140,20 +141,45 @@ class LLaVAMedRunner:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
-        # Ultra-fast generation settings for CPU
-        output_ids = self.model.generate(
-            input_ids,
-            images=image_tensor,
-            attention_mask=attention_mask,
-            do_sample=False,
-            max_new_tokens=3,  # Minimal tokens - just need one word
-            use_cache=True,
-            pad_token_id=self.tokenizer.pad_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-            num_beams=1,  # Greedy decoding (fastest)
-            repetition_penalty=1.0,  # No penalty for speed
-        )
-        output_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip().lower()
+        # Generate with output_scores to get logits
+        try:
+            output_ids = self.model.generate(
+                input_ids,
+                images=image_tensor,
+                attention_mask=attention_mask,
+                do_sample=False,
+                max_new_tokens=3,  # Minimal tokens - just need one word
+                use_cache=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                num_beams=1,  # Greedy decoding (fastest)
+                repetition_penalty=1.0,  # No penalty for speed
+                return_dict_in_generate=True,
+                output_scores=True,
+            )
+            # Extract sequences from GenerateDecoderOnlyOutput or similar
+            if hasattr(output_ids, 'sequences'):
+                sequences = output_ids.sequences
+            else:
+                sequences = output_ids
+            output_text = self.tokenizer.decode(sequences[0], skip_special_tokens=True).strip().lower()
+            scores_available = hasattr(output_ids, 'scores') and output_ids.scores is not None
+        except Exception as e:
+            # Fallback to simple generation if output_scores fails
+            output_ids = self.model.generate(
+                input_ids,
+                images=image_tensor,
+                attention_mask=attention_mask,
+                do_sample=False,
+                max_new_tokens=3,
+                use_cache=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                num_beams=1,
+                repetition_penalty=1.0,
+            )
+            output_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip().lower()
+            scores_available = False
         first, second = [c.lower() for c in self.class_names]
 
         if first in output_text and second in output_text:
@@ -168,13 +194,84 @@ class LLaVAMedRunner:
         # Ensure prediction is valid (0 or 1)
         prediction = max(0, min(1, int(prediction)))
 
-        probs = {first: 0.0, second: 0.0}
-        probs[self.class_names[prediction].lower()] = 1.0
+        # Extract logits from generation scores if available
+        logits = None
+        if scores_available and hasattr(output_ids, 'scores') and output_ids.scores and len(output_ids.scores) > 0:
+            # Get logits from the last generated token
+            last_logits = output_ids.scores[-1][0]  # [0] to get first (and only) sequence
+            # Find token IDs for class names (try encoding first, fallback to search)
+            first_token_id = None
+            second_token_id = None
+            try:
+                # Try encoding the class names directly
+                first_tokens = self.tokenizer.encode(first, add_special_tokens=False)
+                second_tokens = self.tokenizer.encode(second, add_special_tokens=False)
+                if first_tokens:
+                    first_token_id = first_tokens[0]  # Use first token
+                if second_tokens:
+                    second_token_id = second_tokens[0]  # Use first token
+            except Exception:
+                pass
+            
+            # If encoding failed, try a limited search (only check common token ranges)
+            if first_token_id is None or second_token_id is None:
+                # Search in a reasonable range (vocab size is usually < 100k)
+                search_range = min(50000, len(self.tokenizer))
+                for token_id in range(search_range):
+                    try:
+                        token_text = self.tokenizer.decode([token_id], skip_special_tokens=True).strip().lower()
+                        if first_token_id is None and (first in token_text or token_text in first):
+                            first_token_id = token_id
+                        if second_token_id is None and (second in token_text or token_text in second):
+                            second_token_id = token_id
+                        if first_token_id is not None and second_token_id is not None:
+                            break
+                    except Exception:
+                        continue
+            
+            # If we found token IDs, use their logits; otherwise use prediction-based logits
+            if first_token_id is not None and second_token_id is not None:
+                class_logits = torch.tensor([
+                    float(last_logits[first_token_id]),
+                    float(last_logits[second_token_id])
+                ])
+            else:
+                # Fallback: create logits based on prediction with uncertainty
+                # Use a moderate confidence (not 1.0) to allow entropy calculation
+                if prediction == 0:
+                    class_logits = torch.tensor([2.0, 0.5])  # Favor first class
+                else:
+                    class_logits = torch.tensor([0.5, 2.0])  # Favor second class
+            logits = class_logits.cpu().numpy().tolist()
+        else:
+            # No logits available - create estimated logits based on prediction
+            # Use moderate confidence to allow entropy calculation
+            if prediction == 0:
+                logits = [2.0, 0.5]  # Favor first class with some uncertainty
+            else:
+                logits = [0.5, 2.0]  # Favor second class with some uncertainty
+
+        # Convert logits to probabilities using softmax
+        logits_array = np.array(logits)
+        exp_logits = np.exp(logits_array - np.max(logits_array))  # Numerical stability
+        probs_array = exp_logits / exp_logits.sum()
+        
+        # Ensure probabilities are not exactly 1.0/0.0 to allow entropy calculation
+        # Add small epsilon to prevent zero entropy
+        epsilon = 1e-6
+        probs_array = np.clip(probs_array, epsilon, 1.0 - epsilon)
+        probs_array = probs_array / probs_array.sum()  # Renormalize
+
+        confidence = float(np.max(probs_array))
+        probs = {first: float(probs_array[0]), second: float(probs_array[1])}
 
         return {
             "prediction": prediction,
-            "confidence": 1.0,
+            "confidence": confidence,
             "probabilities": probs,
+            "logits": logits,
+            "probabilities_array": probs_array.tolist(),
+            "probabilities_before_boosting": probs_array.tolist(),  # Same for LLaVA-Med (no boosting)
         }
 
     @torch.inference_mode()

@@ -467,19 +467,20 @@ def main():
         random.shuffle(first_mod_images)
         if second_modality:
             random.shuffle(second_mod_images)
-        
+    
         # Only apply max_samples limit for single-modality case
         # (For multi-modality, max_samples is already applied per patient above)
         if args.max_samples is not None and args.max_samples > 0:
             first_mod_images = first_mod_images[:args.max_samples]
             if second_modality:
                 second_mod_images = second_mod_images[:args.max_samples]
-        if second_modality:
-            print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
-            print(f"       2. {second_modality} ({len(second_mod_images)} instances) without {first_modality} context")
-            print(f"       3. {second_modality} ({len(second_mod_images)} instances) with {first_modality} context")
-        else:
-            print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
+    
+    if second_modality:
+        print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
+        print(f"       2. {second_modality} ({len(second_mod_images)} instances) without {first_modality} context")
+        print(f"       3. {second_modality} ({len(second_mod_images)} instances) with {first_modality} context")
+    else:
+        print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
     
     results = {}
     # Store CT predictions by patient_id for sequential context
@@ -677,7 +678,7 @@ def main():
                     patient_predictions[patient_id] = {}
                 pred_class_name = args.class_names[prediction['prediction']]
                 
-                # Store all PET predictions for aggregation (without context)
+                    # Store all PET predictions for aggregation (without context)
                 if patient_id not in patient_pet_predictions_list_no_context:
                     patient_pet_predictions_list_no_context[patient_id] = []
                 
@@ -697,9 +698,9 @@ def main():
                 
                 # Store PET prediction (without context) with slice_index for accurate matching
                 pet_result_no_context = {
-                'modalities_used': [second_modality],
-                'prediction': prediction['prediction'],
-                'confidence': prediction['confidence'],
+                    'modalities_used': [second_modality],
+                    'prediction': prediction['prediction'],
+                    'confidence': prediction['confidence'],
                     'label': label,
                     'used_context': False,  # NO CT context
                     'context_from': [],
@@ -936,9 +937,8 @@ def main():
         print("Warning: No results to evaluate. Check if images were processed successfully.", file=sys.stderr, flush=True)
         return
     
-    # Debug: Count results by modality
+    # Count results by modality
     total_results = sum(len(preds) for preds in results.values())
-    print(f"DEBUG: Total results entries: {len(results)} case_ids, {total_results} total predictions", flush=True)
     
     # Count by step type
     ct_count = 0
@@ -956,7 +956,6 @@ def main():
                     pet_with_ctx_count += 1
                 else:
                     pet_no_ctx_count += 1
-    print(f"DEBUG: CT={ct_count}, PET(no ctx)={pet_no_ctx_count}, PET(with ctx)={pet_with_ctx_count}", flush=True)
     
     try:
         evaluation_results = evaluate_sequential_modalities(results, args.modalities)
@@ -1086,14 +1085,6 @@ def main():
         except Exception as e:
                 print(f"Warning: Failed to complete patient-level analysis: {e}", file=sys.stderr, flush=True)
                 traceback.print_exc()
-    
-    # Debug: Check num_samples before saving
-    print("\nDEBUG BEFORE SAVE:", flush=True)
-    if 'step_results' in evaluation_results:
-        for step_name, step_data in evaluation_results['step_results'].items():
-            num_samples = step_data.get('num_samples', 'N/A')
-            cert_num_samples = step_data.get('certainty_metrics', {}).get('num_samples', 'N/A')
-            print(f"  {step_name}: num_samples={num_samples}, certainty_metrics.num_samples={cert_num_samples}", flush=True)
     
     # Print results
     print_evaluation_results(evaluation_results)

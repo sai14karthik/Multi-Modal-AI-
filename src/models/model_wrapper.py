@@ -720,24 +720,24 @@ class MultimodalModelWrapper:
             image = Image.blend(image, equalized_rgb, 0.4)
         else:
             # Standard preprocessing (balanced)
-        # Enhance contrast for medical images
+            # Enhance contrast for medical images
             enhancer = ImageEnhance.Contrast(image)
             image = enhancer.enhance(1.3)  # Increase contrast by 30%
-        # Enhance sharpness slightly
-        enhancer = ImageEnhance.Sharpness(image)
-        image = enhancer.enhance(1.1)
-        
-        # Apply histogram equalization for better visibility
-        # Convert to grayscale for histogram equalization
-        gray = np.array(image.convert('L'))
-        # Apply histogram equalization
-        equalized = ImageOps.equalize(Image.fromarray(gray))
-        # Convert back to RGB
-        equalized_rgb = Image.new('RGB', equalized.size)
-        equalized_rgb.paste(equalized)
-        
-        # Blend original (70%) with equalized (30%) to preserve natural look
-        image = Image.blend(image, equalized_rgb, 0.3)
+            # Enhance sharpness slightly
+            enhancer = ImageEnhance.Sharpness(image)
+            image = enhancer.enhance(1.1)
+            
+            # Apply histogram equalization for better visibility
+            # Convert to grayscale for histogram equalization
+            gray = np.array(image.convert('L'))
+            # Apply histogram equalization
+            equalized = ImageOps.equalize(Image.fromarray(gray))
+            # Convert back to RGB
+            equalized_rgb = Image.new('RGB', equalized.size)
+            equalized_rgb.paste(equalized)
+            
+            # Blend original (70%) with equalized (30%) to preserve natural look
+            image = Image.blend(image, equalized_rgb, 0.3)
         
         return image
     
@@ -1019,8 +1019,8 @@ class MultimodalModelWrapper:
         
         # Renormalize probabilities after boosting
         probs = probs / probs.sum()
-            
-            # This strategy enables improvement:
+        
+        # This strategy enables improvement:
             # 1. When PET agrees with CT: Massive boost locks in correct prediction
             # 2. When PET disagrees with CT: Trust PET more (PET has more information)
             #    - PET has its own image + CT context in prompts
