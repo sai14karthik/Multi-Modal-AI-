@@ -1333,26 +1333,91 @@ def analyze_logit_similarity(
     Analyze cosine similarity between logit distributions of two modalities.
     Higher similarity indicates more consistent model behavior across modalities.
     
+    Aggregates logits at patient level (weighted average by confidence) before comparing,
+    to avoid bias from comparing arbitrary individual slices.
+    
     Args:
-        mod1_predictions: Predictions from first modality
-        mod2_predictions: Predictions from second modality
+        mod1_predictions: Predictions from first modality (slice-level)
+        mod2_predictions: Predictions from second modality (slice-level)
         patient_ids: Optional list of patient IDs for matching
     
     Returns:
         Dictionary with logit similarity metrics
     """
-    # Match predictions by patient_id or by index
-    matched_pairs = []
+    # Group predictions by patient_id and aggregate logits
     if patient_ids is not None:
-        mod1_by_patient = {pid: pred for pid, pred in zip(patient_ids, mod1_predictions)}
-        mod2_by_patient = {pid: pred for pid, pred in zip(patient_ids, mod2_predictions)}
+        # Group by patient_id
+        mod1_by_patient = {}
+        mod2_by_patient = {}
         
-        for pid in set(patient_ids):
-            if pid in mod1_by_patient and pid in mod2_by_patient:
-                matched_pairs.append((mod1_by_patient[pid], mod2_by_patient[pid]))
+        for pid, pred in zip(patient_ids, mod1_predictions):
+            if pid is not None:
+                if pid not in mod1_by_patient:
+                    mod1_by_patient[pid] = []
+                mod1_by_patient[pid].append(pred)
+        
+        for pid, pred in zip(patient_ids, mod2_predictions):
+            if pid is not None:
+                if pid not in mod2_by_patient:
+                    mod2_by_patient[pid] = []
+                mod2_by_patient[pid].append(pred)
+        
+        # Aggregate logits per patient (weighted by confidence)
+        aggregated_mod1 = {}
+        aggregated_mod2 = {}
+        
+        for pid, slices in mod1_by_patient.items():
+            logits_list = []
+            confidences = []
+            for slice_pred in slices:
+                logits = slice_pred.get('logits')
+                conf = slice_pred.get('confidence', 0.5)
+                if logits is not None:
+                    logits_list.append(np.array(logits))
+                    confidences.append(max(0.0, min(1.0, float(conf))))
+            
+            if logits_list:
+                # Weighted average of logits by confidence
+                confidences = np.array(confidences)
+                if confidences.sum() > 0:
+                    weights = confidences / confidences.sum()
+                    aggregated_logits = np.average(logits_list, axis=0, weights=weights)
+                else:
+                    aggregated_logits = np.mean(logits_list, axis=0)
+                aggregated_mod1[pid] = aggregated_logits
+        
+        for pid, slices in mod2_by_patient.items():
+            logits_list = []
+            confidences = []
+            for slice_pred in slices:
+                logits = slice_pred.get('logits')
+                conf = slice_pred.get('confidence', 0.5)
+                if logits is not None:
+                    logits_list.append(np.array(logits))
+                    confidences.append(max(0.0, min(1.0, float(conf))))
+            
+            if logits_list:
+                # Weighted average of logits by confidence
+                confidences = np.array(confidences)
+                if confidences.sum() > 0:
+                    weights = confidences / confidences.sum()
+                    aggregated_logits = np.average(logits_list, axis=0, weights=weights)
+                else:
+                    aggregated_logits = np.mean(logits_list, axis=0)
+                aggregated_mod2[pid] = aggregated_logits
+        
+        # Match by patient_id and compare aggregated logits
+        common_patients = set(aggregated_mod1.keys()) & set(aggregated_mod2.keys())
+        matched_pairs = [(aggregated_mod1[pid], aggregated_mod2[pid]) for pid in common_patients]
     else:
+        # Fallback: compare by index (slice-level)
         min_len = min(len(mod1_predictions), len(mod2_predictions))
-        matched_pairs = list(zip(mod1_predictions[:min_len], mod2_predictions[:min_len]))
+        matched_pairs = []
+        for i in range(min_len):
+            mod1_logits = mod1_predictions[i].get('logits')
+            mod2_logits = mod2_predictions[i].get('logits')
+            if mod1_logits is not None and mod2_logits is not None:
+                matched_pairs.append((np.array(mod1_logits), np.array(mod2_logits)))
     
     if not matched_pairs:
         return {
@@ -1362,17 +1427,10 @@ def analyze_logit_similarity(
         }
     
     similarities = []
-    for mod1_pred, mod2_pred in matched_pairs:
-        mod1_logits = mod1_pred.get('logits')
-        mod2_logits = mod2_pred.get('logits')
-        
-        if mod1_logits is not None and mod2_logits is not None:
-            mod1_logits_arr = np.array(mod1_logits)
-            mod2_logits_arr = np.array(mod2_logits)
-            
-            if len(mod1_logits_arr) == len(mod2_logits_arr) and len(mod1_logits_arr) > 0:
-                similarity = calculate_cosine_similarity(mod1_logits_arr, mod2_logits_arr)
-                similarities.append(similarity)
+    for mod1_logits_arr, mod2_logits_arr in matched_pairs:
+        if len(mod1_logits_arr) == len(mod2_logits_arr) and len(mod1_logits_arr) > 0:
+            similarity = calculate_cosine_similarity(mod1_logits_arr, mod2_logits_arr)
+            similarities.append(similarity)
     
     if not similarities:
         return {
@@ -1472,15 +1530,57 @@ def analyze_pet_vs_ct_confidence(
     Returns:
         Dictionary with PET vs CT confidence analysis
     """
-    # Match predictions
+    # Match predictions - aggregate at patient level first
     matched_pairs = []
     if patient_ids is not None:
-        ct_by_patient = {pid: pred for pid, pred in zip(patient_ids, ct_predictions)}
-        pet_by_patient = {pid: pred for pid, pred in zip(patient_ids, pet_predictions)}
+        # Group by patient_id (preserve all slices)
+        ct_by_patient = {}
+        pet_by_patient = {}
         
+        for pid, pred in zip(patient_ids, ct_predictions):
+            if pid is not None:
+                if pid not in ct_by_patient:
+                    ct_by_patient[pid] = []
+                ct_by_patient[pid].append(pred)
+        
+        for pid, pred in zip(patient_ids, pet_predictions):
+            if pid is not None:
+                if pid not in pet_by_patient:
+                    pet_by_patient[pid] = []
+                pet_by_patient[pid].append(pred)
+        
+        # Aggregate predictions per patient (weighted by confidence)
         for pid in set(patient_ids):
             if pid in ct_by_patient and pid in pet_by_patient:
-                matched_pairs.append((ct_by_patient[pid], pet_by_patient[pid]))
+                ct_slices = ct_by_patient[pid]
+                pet_slices = pet_by_patient[pid]
+                
+                # Aggregate CT: weighted average confidence
+                ct_aggregated = aggregate_patient_predictions(ct_slices)
+                
+                # Aggregate PET: weighted average confidence
+                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                
+                # Create aggregated prediction dicts with full info
+                ct_pred = {
+                    'prediction': ct_aggregated['prediction'],
+                    'confidence': ct_aggregated['confidence'],
+                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
+                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else [],
+                    'logits': ct_slices[0].get('logits', []) if ct_slices else []
+                }
+                
+                pet_pred = {
+                    'prediction': pet_aggregated['prediction'],
+                    'confidence': pet_aggregated['confidence'],
+                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
+                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
+                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None,
+                    'used_context': pet_slices[0].get('used_context', False) if pet_slices else False,
+                    'logits': pet_slices[0].get('logits', []) if pet_slices else []
+                }
+                
+                matched_pairs.append((ct_pred, pet_pred))
     else:
         min_len = min(len(ct_predictions), len(pet_predictions))
         matched_pairs = list(zip(ct_predictions[:min_len], pet_predictions[:min_len]))
@@ -1575,20 +1675,68 @@ def analyze_multimodality_uncertainty_effect(
     Returns:
         Dictionary with uncertainty analysis
     """
-    # Match all three prediction sets
+    # Match all three prediction sets - aggregate at patient level first
     matched_triplets = []
     if patient_ids is not None:
-        ct_by_patient = {pid: pred for pid, pred in zip(patient_ids, ct_predictions)}
-        pet_by_patient = {pid: pred for pid, pred in zip(patient_ids, pet_predictions)}
-        combined_by_patient = {pid: pred for pid, pred in zip(patient_ids, combined_predictions)}
+        # Group by patient_id (preserve all slices)
+        ct_by_patient = {}
+        pet_by_patient = {}
+        combined_by_patient = {}
         
+        for pid, pred in zip(patient_ids, ct_predictions):
+            if pid is not None:
+                if pid not in ct_by_patient:
+                    ct_by_patient[pid] = []
+                ct_by_patient[pid].append(pred)
+        
+        for pid, pred in zip(patient_ids, pet_predictions):
+            if pid is not None:
+                if pid not in pet_by_patient:
+                    pet_by_patient[pid] = []
+                pet_by_patient[pid].append(pred)
+        
+        for pid, pred in zip(patient_ids, combined_predictions):
+            if pid is not None:
+                if pid not in combined_by_patient:
+                    combined_by_patient[pid] = []
+                combined_by_patient[pid].append(pred)
+        
+        # Aggregate predictions per patient
         for pid in set(patient_ids):
             if pid in ct_by_patient and pid in pet_by_patient and pid in combined_by_patient:
-                matched_triplets.append((
-                    ct_by_patient[pid],
-                    pet_by_patient[pid],
-                    combined_by_patient[pid]
-                ))
+                ct_slices = ct_by_patient[pid]
+                pet_slices = pet_by_patient[pid]
+                combined_slices = combined_by_patient[pid]
+                
+                # Aggregate each modality
+                ct_aggregated = aggregate_patient_predictions(ct_slices)
+                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                combined_aggregated = aggregate_patient_predictions(combined_slices)
+                
+                # Create aggregated prediction dicts
+                ct_pred = {
+                    'prediction': ct_aggregated['prediction'],
+                    'confidence': ct_aggregated['confidence'],
+                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
+                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else []
+                }
+                
+                pet_pred = {
+                    'prediction': pet_aggregated['prediction'],
+                    'confidence': pet_aggregated['confidence'],
+                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
+                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
+                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None
+                }
+                
+                combined_pred = {
+                    'prediction': combined_aggregated['prediction'],
+                    'confidence': combined_aggregated['confidence'],
+                    'probabilities': combined_slices[0].get('probabilities', {}) if combined_slices else {},
+                    'probabilities_array': combined_slices[0].get('probabilities_array', []) if combined_slices else []
+                }
+                
+                matched_triplets.append((ct_pred, pet_pred, combined_pred))
     else:
         min_len = min(len(ct_predictions), len(pet_predictions), len(combined_predictions))
         matched_triplets = list(zip(
@@ -1699,20 +1847,68 @@ def analyze_zero_shot_multimodal_value(
     Returns:
         Dictionary with multimodal value analysis
     """
-    # Match all three prediction sets
+    # Match all three prediction sets - aggregate at patient level first
     matched_triplets = []
     if patient_ids is not None:
-        ct_by_patient = {pid: pred for pid, pred in zip(patient_ids, ct_predictions)}
-        pet_by_patient = {pid: pred for pid, pred in zip(patient_ids, pet_predictions)}
-        combined_by_patient = {pid: pred for pid, pred in zip(patient_ids, combined_predictions)}
+        # Group by patient_id (preserve all slices)
+        ct_by_patient = {}
+        pet_by_patient = {}
+        combined_by_patient = {}
         
+        for pid, pred in zip(patient_ids, ct_predictions):
+            if pid is not None:
+                if pid not in ct_by_patient:
+                    ct_by_patient[pid] = []
+                ct_by_patient[pid].append(pred)
+        
+        for pid, pred in zip(patient_ids, pet_predictions):
+            if pid is not None:
+                if pid not in pet_by_patient:
+                    pet_by_patient[pid] = []
+                pet_by_patient[pid].append(pred)
+        
+        for pid, pred in zip(patient_ids, combined_predictions):
+            if pid is not None:
+                if pid not in combined_by_patient:
+                    combined_by_patient[pid] = []
+                combined_by_patient[pid].append(pred)
+        
+        # Aggregate predictions per patient
         for pid in set(patient_ids):
             if pid in ct_by_patient and pid in pet_by_patient and pid in combined_by_patient:
-                matched_triplets.append((
-                    ct_by_patient[pid],
-                    pet_by_patient[pid],
-                    combined_by_patient[pid]
-                ))
+                ct_slices = ct_by_patient[pid]
+                pet_slices = pet_by_patient[pid]
+                combined_slices = combined_by_patient[pid]
+                
+                # Aggregate each modality
+                ct_aggregated = aggregate_patient_predictions(ct_slices)
+                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                combined_aggregated = aggregate_patient_predictions(combined_slices)
+                
+                # Create aggregated prediction dicts
+                ct_pred = {
+                    'prediction': ct_aggregated['prediction'],
+                    'confidence': ct_aggregated['confidence'],
+                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
+                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else []
+                }
+                
+                pet_pred = {
+                    'prediction': pet_aggregated['prediction'],
+                    'confidence': pet_aggregated['confidence'],
+                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
+                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
+                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None
+                }
+                
+                combined_pred = {
+                    'prediction': combined_aggregated['prediction'],
+                    'confidence': combined_aggregated['confidence'],
+                    'probabilities': combined_slices[0].get('probabilities', {}) if combined_slices else {},
+                    'probabilities_array': combined_slices[0].get('probabilities_array', []) if combined_slices else []
+                }
+                
+                matched_triplets.append((ct_pred, pet_pred, combined_pred))
     else:
         min_len = min(len(ct_predictions), len(pet_predictions), len(combined_predictions))
         matched_triplets = list(zip(
@@ -1847,15 +2043,57 @@ def analyze_pet_dominance(
     Returns:
         Dictionary with PET dominance analysis
     """
-    # Match predictions
+    # Match predictions - aggregate at patient level first
     matched_pairs = []
     if patient_ids is not None:
-        ct_by_patient = {pid: pred for pid, pred in zip(patient_ids, ct_predictions)}
-        pet_by_patient = {pid: pred for pid, pred in zip(patient_ids, pet_predictions)}
+        # Group by patient_id (preserve all slices)
+        ct_by_patient = {}
+        pet_by_patient = {}
         
+        for pid, pred in zip(patient_ids, ct_predictions):
+            if pid is not None:
+                if pid not in ct_by_patient:
+                    ct_by_patient[pid] = []
+                ct_by_patient[pid].append(pred)
+        
+        for pid, pred in zip(patient_ids, pet_predictions):
+            if pid is not None:
+                if pid not in pet_by_patient:
+                    pet_by_patient[pid] = []
+                pet_by_patient[pid].append(pred)
+        
+        # Aggregate predictions per patient (weighted by confidence)
         for pid in set(patient_ids):
             if pid in ct_by_patient and pid in pet_by_patient:
-                matched_pairs.append((ct_by_patient[pid], pet_by_patient[pid]))
+                ct_slices = ct_by_patient[pid]
+                pet_slices = pet_by_patient[pid]
+                
+                # Aggregate CT: weighted average confidence
+                ct_aggregated = aggregate_patient_predictions(ct_slices)
+                
+                # Aggregate PET: weighted average confidence
+                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                
+                # Create aggregated prediction dicts with full info
+                ct_pred = {
+                    'prediction': ct_aggregated['prediction'],
+                    'confidence': ct_aggregated['confidence'],
+                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
+                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else [],
+                    'logits': ct_slices[0].get('logits', []) if ct_slices else []
+                }
+                
+                pet_pred = {
+                    'prediction': pet_aggregated['prediction'],
+                    'confidence': pet_aggregated['confidence'],
+                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
+                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
+                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None,
+                    'used_context': pet_slices[0].get('used_context', False) if pet_slices else False,
+                    'logits': pet_slices[0].get('logits', []) if pet_slices else []
+                }
+                
+                matched_pairs.append((ct_pred, pet_pred))
     else:
         min_len = min(len(ct_predictions), len(pet_predictions))
         matched_pairs = list(zip(ct_predictions[:min_len], pet_predictions[:min_len]))
@@ -1946,20 +2184,68 @@ def analyze_multimodal_bias(
     Returns:
         Dictionary with multimodal bias analysis
     """
-    # Match all three prediction sets
+    # Match all three prediction sets - aggregate at patient level first
     matched_triplets = []
     if patient_ids is not None:
-        ct_by_patient = {pid: pred for pid, pred in zip(patient_ids, ct_predictions)}
-        pet_by_patient = {pid: pred for pid, pred in zip(patient_ids, pet_predictions)}
-        combined_by_patient = {pid: pred for pid, pred in zip(patient_ids, combined_predictions)}
+        # Group by patient_id (preserve all slices)
+        ct_by_patient = {}
+        pet_by_patient = {}
+        combined_by_patient = {}
         
+        for pid, pred in zip(patient_ids, ct_predictions):
+            if pid is not None:
+                if pid not in ct_by_patient:
+                    ct_by_patient[pid] = []
+                ct_by_patient[pid].append(pred)
+        
+        for pid, pred in zip(patient_ids, pet_predictions):
+            if pid is not None:
+                if pid not in pet_by_patient:
+                    pet_by_patient[pid] = []
+                pet_by_patient[pid].append(pred)
+        
+        for pid, pred in zip(patient_ids, combined_predictions):
+            if pid is not None:
+                if pid not in combined_by_patient:
+                    combined_by_patient[pid] = []
+                combined_by_patient[pid].append(pred)
+        
+        # Aggregate predictions per patient
         for pid in set(patient_ids):
             if pid in ct_by_patient and pid in pet_by_patient and pid in combined_by_patient:
-                matched_triplets.append((
-                    ct_by_patient[pid],
-                    pet_by_patient[pid],
-                    combined_by_patient[pid]
-                ))
+                ct_slices = ct_by_patient[pid]
+                pet_slices = pet_by_patient[pid]
+                combined_slices = combined_by_patient[pid]
+                
+                # Aggregate each modality
+                ct_aggregated = aggregate_patient_predictions(ct_slices)
+                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                combined_aggregated = aggregate_patient_predictions(combined_slices)
+                
+                # Create aggregated prediction dicts
+                ct_pred = {
+                    'prediction': ct_aggregated['prediction'],
+                    'confidence': ct_aggregated['confidence'],
+                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
+                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else []
+                }
+                
+                pet_pred = {
+                    'prediction': pet_aggregated['prediction'],
+                    'confidence': pet_aggregated['confidence'],
+                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
+                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
+                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None
+                }
+                
+                combined_pred = {
+                    'prediction': combined_aggregated['prediction'],
+                    'confidence': combined_aggregated['confidence'],
+                    'probabilities': combined_slices[0].get('probabilities', {}) if combined_slices else {},
+                    'probabilities_array': combined_slices[0].get('probabilities_array', []) if combined_slices else []
+                }
+                
+                matched_triplets.append((ct_pred, pet_pred, combined_pred))
     else:
         min_len = min(len(ct_predictions), len(pet_predictions), len(combined_predictions))
         matched_triplets = list(zip(

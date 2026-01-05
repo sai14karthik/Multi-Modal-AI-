@@ -108,3 +108,4 @@ htmlcov/
 # test_*.py
 # quick_test_*.py
 
+*.sh

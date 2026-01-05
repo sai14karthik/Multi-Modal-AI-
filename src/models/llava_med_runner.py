@@ -144,16 +144,16 @@ class LLaVAMedRunner:
         # Generate with output_scores to get logits
         try:
             output_ids = self.model.generate(
-                input_ids,
-                images=image_tensor,
-                attention_mask=attention_mask,
-                do_sample=False,
-                max_new_tokens=3,  # Minimal tokens - just need one word
-                use_cache=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
-                num_beams=1,  # Greedy decoding (fastest)
-                repetition_penalty=1.0,  # No penalty for speed
+            input_ids,
+            images=image_tensor,
+            attention_mask=attention_mask,
+            do_sample=False,
+            max_new_tokens=3,  # Minimal tokens - just need one word
+            use_cache=True,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            num_beams=1,  # Greedy decoding (fastest)
+            repetition_penalty=1.0,  # No penalty for speed
                 return_dict_in_generate=True,
                 output_scores=True,
             )
@@ -162,7 +162,24 @@ class LLaVAMedRunner:
                 sequences = output_ids.sequences
             else:
                 sequences = output_ids
-            output_text = self.tokenizer.decode(sequences[0], skip_special_tokens=True).strip().lower()
+            # Handle tensor/list conversion for decoding
+            if isinstance(sequences, torch.Tensor):
+                if sequences.dim() > 1:
+                    sequences_to_decode = sequences[0]
+                else:
+                    sequences_to_decode = sequences
+            elif isinstance(sequences, list):
+                sequences_to_decode = sequences[0] if sequences else []
+            else:
+                sequences_to_decode = sequences[0] if hasattr(sequences, '__getitem__') else sequences
+            
+            # Convert to list if tensor for tokenizer
+            if isinstance(sequences_to_decode, torch.Tensor):
+                sequences_to_decode = sequences_to_decode.cpu().tolist()
+            elif not isinstance(sequences_to_decode, list):
+                sequences_to_decode = list(sequences_to_decode) if hasattr(sequences_to_decode, '__iter__') else [sequences_to_decode]
+            
+            output_text = self.tokenizer.decode(sequences_to_decode, skip_special_tokens=True).strip().lower()
             scores_available = hasattr(output_ids, 'scores') and output_ids.scores is not None
         except Exception as e:
             # Fallback to simple generation if output_scores fails
@@ -178,8 +195,29 @@ class LLaVAMedRunner:
                 num_beams=1,
                 repetition_penalty=1.0,
             )
-            output_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip().lower()
-            scores_available = False
+            # Handle different output formats
+            if isinstance(output_ids, torch.Tensor):
+                if output_ids.dim() > 1:
+                    output_ids_to_decode = output_ids[0]
+                else:
+                    output_ids_to_decode = output_ids
+            elif isinstance(output_ids, list):
+                output_ids_to_decode = output_ids[0] if output_ids else []
+            else:
+                # Try to get sequences if it's a GenerateDecoderOnlyOutput
+                if hasattr(output_ids, 'sequences'):
+                    output_ids_to_decode = output_ids.sequences[0]
+                else:
+                    output_ids_to_decode = output_ids[0] if hasattr(output_ids, '__getitem__') else output_ids
+            
+            # Convert to list if tensor for tokenizer
+            if isinstance(output_ids_to_decode, torch.Tensor):
+                output_ids_to_decode = output_ids_to_decode.cpu().tolist()
+            elif not isinstance(output_ids_to_decode, list):
+                output_ids_to_decode = list(output_ids_to_decode) if hasattr(output_ids_to_decode, '__iter__') else [output_ids_to_decode]
+            
+            output_text = self.tokenizer.decode(output_ids_to_decode, skip_special_tokens=True).strip().lower()
+        scores_available = False
         first, second = [c.lower() for c in self.class_names]
 
         if first in output_text and second in output_text:
