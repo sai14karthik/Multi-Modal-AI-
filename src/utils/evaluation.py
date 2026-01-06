@@ -324,16 +324,21 @@ def evaluate_sequential_modalities(
             # Analyze certainty metrics
             certainty_metrics = analyze_certainty_metrics(data['full_predictions'], step_name)
             
+            # Analyze overconfidence (high-confidence incorrect predictions)
+            overconfidence_metrics = analyze_overconfidence(data['full_predictions'], step_name)
+            
             step_results[step_name] = {
                 'accuracy': acc,
                 'num_samples': num_predictions,
-                'certainty_metrics': certainty_metrics
+                'certainty_metrics': certainty_metrics,
+                'overconfidence_metrics': overconfidence_metrics
             }
         else:
             step_results[step_name] = {
                 'accuracy': 0.0,
                 'num_samples': 0,
-                'certainty_metrics': analyze_certainty_metrics([], step_name)
+                'certainty_metrics': analyze_certainty_metrics([], step_name),
+                'overconfidence_metrics': analyze_overconfidence([], step_name)
             }
     
     # Analyze modality agreement if we have both modalities
@@ -537,8 +542,12 @@ def evaluate_sequential_modalities(
                 # Fallback: use CT vs PET if CT+PET calculation failed
                 step_results[combined_mod_name]['disagreement_rate'] = disagreement_rate_ct_vs_pet
     
+    # Calculate patient-level results (mandatory requirement)
+    patient_level_results = calculate_patient_level_results(results, modalities)
+    
     return {
         'step_results': step_results,
+        'patient_level_results': patient_level_results,  # Mandatory patient-level results
         'modalities': modalities,
         'agreement_metrics': agreement_metrics,
         'ct_vs_combined_agreement': ct_vs_combined_agreement,
@@ -554,17 +563,92 @@ def evaluate_sequential_modalities(
 
 def print_evaluation_results(evaluation_results: Dict):
     """
-    Print evaluation results - simplified to show only primary metrics.
+    Print evaluation results with emphasis on reliability and uncertainty.
+    Focuses on patient-level results (mandatory) and overconfidence analysis.
     """
     step_results = evaluation_results.get('step_results', {})
+    patient_level_results = evaluation_results.get('patient_level_results', {})
     modalities = evaluation_results.get('modalities', [])
     agreement_metrics = evaluation_results.get('agreement_metrics')
     ct_vs_combined_agreement = evaluation_results.get('ct_vs_combined_agreement')
     
-    # PRIMARY ANALYSIS: Certainty comparison across modalities
-    # Requested format: | Modality | Avg confidence | Entropy | Disagreement rate |
+    # ============================================================================
+    # PATIENT-LEVEL RESULTS (MANDATORY REQUIREMENT)
+    # ============================================================================
     print("\n" + "="*80)
-    print("CERTAINTY METRICS")
+    print("PATIENT-LEVEL RESULTS (MANDATORY)")
+    print("="*80)
+    print("Results aggregated from slice-level to patient-level using weighted voting.")
+    print()
+    
+    if patient_level_results:
+        # Patient-level certainty metrics
+        print(f"{'Modality':<15} {'Accuracy':<12} {'Avg Confidence':<18} {'Entropy':<15} {'Num Patients':<15}")
+        print("-"*80)
+        
+        def get_step_order(step_name):
+            if len(modalities) >= 2:
+                if step_name == modalities[0]:
+                    return 0
+                elif step_name == modalities[1]:
+                    return 1
+                elif step_name == '+'.join(modalities):
+                    return 2
+            return 3
+        
+        sorted_steps = sorted(patient_level_results.keys(), key=get_step_order)
+        for step_name in sorted_steps:
+            step_data = patient_level_results[step_name]
+            num_patients = step_data.get('num_samples', 0)
+            if num_patients == 0:
+                continue
+            
+            acc = step_data.get('accuracy', 0.0)
+            cert_metrics = step_data.get('certainty_metrics', {})
+            avg_conf = cert_metrics.get('avg_confidence', 0.0)
+            avg_entropy = cert_metrics.get('avg_entropy', 0.0)
+            
+            print(f"{step_name:<15} {acc:<12.4f} {avg_conf:<18.4f} {avg_entropy:<15.4f} {num_patients:<15}")
+        
+        # Patient-level overconfidence analysis
+        print("\n" + "-"*80)
+        print("PATIENT-LEVEL OVERCONFIDENCE ANALYSIS")
+        print("-"*80)
+        print("High-confidence incorrect predictions (confidence ≥ 0.7) - Critical reliability issue")
+        print()
+        print(f"{'Modality':<15} {'High-Conf Incorrect':<20} {'Rate':<12} {'Avg Conf (Wrong)':<18} {'Overconf Severity':<20}")
+        print("-"*80)
+        
+        for step_name in sorted_steps:
+            step_data = patient_level_results[step_name]
+            num_patients = step_data.get('num_samples', 0)
+            if num_patients == 0:
+                continue
+            
+            overconf = step_data.get('overconfidence_metrics', {})
+            high_conf_incorrect = overconf.get('high_conf_incorrect_count', 0)
+            high_conf_incorrect_rate = overconf.get('high_conf_incorrect_rate', 0.0)
+            avg_conf_wrong = overconf.get('avg_confidence_when_incorrect', 0.0)
+            overconf_severity = overconf.get('overconfidence_severity', 0.0)
+            
+            print(f"{step_name:<15} {high_conf_incorrect:<20} {high_conf_incorrect_rate:<12.4f} {avg_conf_wrong:<18.4f} {overconf_severity:<20.4f}")
+        
+        print("\n" + "-"*80)
+        print("INTERPRETATION:")
+        print("-"*80)
+        print("• High-Conf Incorrect: Number of patients where model was confident (≥0.7) but wrong")
+        print("• Rate: Proportion of all patients with high-confidence errors")
+        print("• Avg Conf (Wrong): Average confidence when prediction is incorrect")
+        print("• Overconf Severity: Average confidence of high-confidence incorrect predictions")
+        print("  → Higher values indicate more severe overconfidence (model very wrong but very confident)")
+    else:
+        print("Warning: Patient-level results not available.")
+    
+    # ============================================================================
+    # SLICE-LEVEL CERTAINTY METRICS (for reference)
+    # ============================================================================
+    print("\n" + "="*80)
+    print("SLICE-LEVEL CERTAINTY METRICS (Reference)")
     print("="*80)
     
     # Get disagreement rate from agreement metrics (CT vs PET alone)
@@ -619,7 +703,7 @@ def print_evaluation_results(evaluation_results: Dict):
             # CT vs CT+PET disagreement (shows if CT context improves agreement)
             if disagreement_rate_ct_vs_combined is not None:
                 display_disagreement = disagreement_rate_ct_vs_combined
-        else:
+            else:
                 # Fallback: use CT vs PET if CT+PET calculation failed
                 display_disagreement = disagreement_rate_ct_vs_pet
         else:
@@ -810,22 +894,75 @@ def print_evaluation_results(evaluation_results: Dict):
         print(f"PET bias score (matches PET when CT≠PET): {pet_bias_score*100:.1f}%")
         print(f"True combination rate: {true_combination_rate*100:.1f}%")
     
-    # ACCURACY
+    # ============================================================================
+    # OVERCONFIDENCE ANALYSIS (SLICE-LEVEL)
+    # ============================================================================
     print("\n" + "="*80)
-    print("ACCURACY")
+    print("OVERCONFIDENCE ANALYSIS: HIGH-CONFIDENCE INCORRECT PREDICTIONS")
     print("="*80)
-    # Use same custom sort order: CT, PET, CT+PET
+    print("Critical reliability issue: Cases where model is highly confident but incorrect.")
+    print("This analysis reveals when the model fails to recognize its own uncertainty.")
+    print()
+    
+    print(f"{'Modality':<15} {'High-Conf Incorrect':<20} {'Rate':<12} {'Avg Conf (Wrong)':<18} {'Avg Conf (Correct)':<20} {'Overconf Severity':<20}")
+    print("-"*80)
+    
     sorted_steps = sorted(step_results.keys(), key=get_step_order)
     for step_name in sorted_steps:
         step_data = step_results[step_name]
         num_samples = step_data.get('num_samples', 0)
-        
-        # Skip steps with no data (e.g., CT+PET in sequential approach)
         if num_samples == 0:
             continue
         
+        overconf = step_data.get('overconfidence_metrics', {})
+        high_conf_incorrect = overconf.get('high_conf_incorrect_count', 0)
+        high_conf_incorrect_rate = overconf.get('high_conf_incorrect_rate', 0.0)
+        avg_conf_wrong = overconf.get('avg_confidence_when_incorrect', 0.0)
+        avg_conf_correct = overconf.get('avg_confidence_when_correct', 0.0)
+        overconf_severity = overconf.get('overconfidence_severity', 0.0)
+        
+        print(f"{step_name:<15} {high_conf_incorrect:<20} {high_conf_incorrect_rate:<12.4f} {avg_conf_wrong:<18.4f} {avg_conf_correct:<20.4f} {overconf_severity:<20.4f}")
+    
+    print("\n" + "-"*80)
+    print("KEY INSIGHTS:")
+    print("-"*80)
+    print("• High-confidence errors are particularly dangerous - model appears certain but is wrong")
+    print("• High Overconf Severity indicates model is very wrong but very confident (worst case)")
+    print("• Large gap between Avg Conf (Wrong) and Avg Conf (Correct) suggests poor calibration")
+    print("• Models should have LOW confidence when incorrect - high confidence on errors is unreliable")
+    
+    # ============================================================================
+    # ACCURACY (Reference Only - Reliability is Primary Focus)
+    # ============================================================================
+    print("\n" + "="*80)
+    print("ACCURACY (Reference Only)")
+    print("="*80)
+    print("Note: In zero-shot settings, accuracy near chance is expected.")
+    print("Primary focus is on RELIABILITY (uncertainty, overconfidence) rather than accuracy alone.")
+    print()
+    
+    # Slice-level accuracy
+    print("Slice-Level Accuracy:")
+    sorted_steps = sorted(step_results.keys(), key=get_step_order)
+    for step_name in sorted_steps:
+        step_data = step_results[step_name]
+        num_samples = step_data.get('num_samples', 0)
+        if num_samples == 0:
+            continue
         acc = step_data.get('accuracy', 0.0)
-        print(f"{step_name}: {acc:.4f} (n={num_samples})")
+        print(f"  {step_name}: {acc:.4f} (n={num_samples} slices)")
+    
+    # Patient-level accuracy
+    if patient_level_results:
+        print("\nPatient-Level Accuracy:")
+        sorted_steps = sorted(patient_level_results.keys(), key=get_step_order)
+        for step_name in sorted_steps:
+            step_data = patient_level_results[step_name]
+            num_patients = step_data.get('num_samples', 0)
+            if num_patients == 0:
+                continue
+            acc = step_data.get('accuracy', 0.0)
+            print(f"  {step_name}: {acc:.4f} (n={num_patients} patients)")
     
     print("="*80 + "\n")
 
@@ -2353,6 +2490,241 @@ def analyze_multimodal_bias(
     }
 
 
+def analyze_overconfidence(
+    predictions: List[Dict],
+    modality_name: str,
+    confidence_threshold: float = 0.7
+) -> Dict:
+    """
+    Analyze cases where the model is high-confidence but incorrect (overconfidence).
+    
+    This is critical for understanding model reliability - high confidence doesn't
+    guarantee correctness, and overconfident errors are particularly dangerous.
+    
+    Args:
+        predictions: List of prediction dicts with 'prediction', 'label', 'confidence'
+        modality_name: Name of modality (e.g., 'CT', 'PET')
+        confidence_threshold: Minimum confidence to consider "high-confidence" (default: 0.7)
+    
+    Returns:
+        Dictionary with overconfidence analysis metrics
+    """
+    if not predictions:
+        return {
+            'modality': modality_name,
+            'total_samples': 0,
+            'high_conf_incorrect_count': 0,
+            'high_conf_incorrect_rate': 0.0,
+            'avg_confidence_when_incorrect': 0.0,
+            'avg_confidence_when_correct': 0.0,
+            'overconfidence_severity': 0.0,  # Average confidence of incorrect high-conf predictions
+            'high_conf_correct_count': 0,
+            'high_conf_correct_rate': 0.0,
+            'low_conf_incorrect_count': 0,
+            'low_conf_incorrect_rate': 0.0
+        }
+    
+    high_conf_incorrect = []
+    high_conf_correct = []
+    low_conf_incorrect = []
+    low_conf_correct = []
+    all_incorrect_confidences = []
+    all_correct_confidences = []
+    
+    for pred in predictions:
+        prediction = pred.get('prediction')
+        label = pred.get('label')
+        confidence = pred.get('confidence', 0.0)
+        
+        if prediction is None or label is None:
+            continue
+        
+        is_correct = (int(prediction) == int(label))
+        is_high_conf = confidence >= confidence_threshold
+        
+        if is_correct:
+            all_correct_confidences.append(confidence)
+            if is_high_conf:
+                high_conf_correct.append(confidence)
+            else:
+                low_conf_correct.append(confidence)
+        else:
+            all_incorrect_confidences.append(confidence)
+            if is_high_conf:
+                high_conf_incorrect.append(confidence)
+            else:
+                low_conf_incorrect.append(confidence)
+    
+    total = len(predictions)
+    high_conf_incorrect_count = len(high_conf_incorrect)
+    high_conf_correct_count = len(high_conf_correct)
+    low_conf_incorrect_count = len(low_conf_incorrect)
+    
+    # Calculate rates
+    high_conf_incorrect_rate = high_conf_incorrect_count / total if total > 0 else 0.0
+    high_conf_correct_rate = high_conf_correct_count / total if total > 0 else 0.0
+    low_conf_incorrect_rate = low_conf_incorrect_count / total if total > 0 else 0.0
+    
+    # Calculate average confidences
+    avg_conf_when_incorrect = float(np.mean(all_incorrect_confidences)) if all_incorrect_confidences else 0.0
+    avg_conf_when_correct = float(np.mean(all_correct_confidences)) if all_correct_confidences else 0.0
+    
+    # Overconfidence severity: average confidence of high-confidence incorrect predictions
+    overconfidence_severity = float(np.mean(high_conf_incorrect)) if high_conf_incorrect else 0.0
+    
+    return {
+        'modality': modality_name,
+        'total_samples': total,
+        'high_conf_incorrect_count': high_conf_incorrect_count,
+        'high_conf_incorrect_rate': high_conf_incorrect_rate,
+        'avg_confidence_when_incorrect': avg_conf_when_incorrect,
+        'avg_confidence_when_correct': avg_conf_when_correct,
+        'overconfidence_severity': overconfidence_severity,
+        'high_conf_correct_count': high_conf_correct_count,
+        'high_conf_correct_rate': high_conf_correct_rate,
+        'low_conf_incorrect_count': low_conf_incorrect_count,
+        'low_conf_incorrect_rate': low_conf_incorrect_rate,
+        'confidence_threshold': confidence_threshold
+    }
+
+
+def calculate_patient_level_results(
+    results: Dict[str, List[Dict]],
+    modalities: List[str]
+) -> Dict:
+    """
+    Calculate patient-level aggregated results (mandatory requirement).
+    
+    Aggregates slice-level predictions to patient-level using weighted voting,
+    then calculates accuracy and certainty metrics at patient level.
+    
+    Args:
+        results: Dictionary with case_ids as keys and lists of predictions as values
+        modalities: List of modality names
+    
+    Returns:
+        Dictionary with patient-level step_results (same structure as slice-level)
+    """
+    # Organize predictions by patient and modality
+    patient_data = {}  # {patient_id: {modality: [predictions], ...}}
+    
+    for case_id, case_results in results.items():
+        for result in case_results:
+            patient_id = result.get('patient_id')
+            if patient_id is None:
+                continue
+            
+            mods_used = result.get('modalities_used', [])
+            used_context = result.get('used_context', False)
+            context_from = result.get('context_from', [])
+            
+            # Determine step name (same logic as evaluate_sequential_modalities)
+            step_name = result.get('step')
+            if step_name is None:
+                if len(mods_used) == 1:
+                    mod = mods_used[0]
+                    if mod == modalities[0]:
+                        step_name = mod
+                    elif mod == modalities[1]:
+                        if used_context and len(context_from) > 0 and modalities[0] in context_from:
+                            step_name = '+'.join(modalities)
+                        else:
+                            step_name = mod
+                elif len(mods_used) == len(modalities) and len(modalities) > 1:
+                    step_name = '+'.join(modalities)
+                else:
+                    continue
+            else:
+                continue
+            
+            # Use step_name as-is (already mapped correctly)
+            if patient_id not in patient_data:
+                patient_data[patient_id] = {}
+            if step_name not in patient_data[patient_id]:
+                patient_data[patient_id][step_name] = []
+            
+            patient_data[patient_id][step_name].append(result)
+    
+    # Aggregate to patient level and calculate metrics
+    step_data = {
+        modalities[0]: {'predictions': [], 'labels': [], 'full_predictions': []},
+    }
+    if len(modalities) > 1:
+        step_data[modalities[1]] = {'predictions': [], 'labels': [], 'full_predictions': []}
+        combined_step_name = '+'.join(modalities)
+        step_data[combined_step_name] = {'predictions': [], 'labels': [], 'full_predictions': []}
+    
+    for patient_id, modality_predictions in patient_data.items():
+        for step_name, slices in modality_predictions.items():
+            if not slices:
+                continue
+            
+            # Aggregate slices to patient level
+            aggregated = aggregate_patient_predictions(slices)
+            
+            # Get label (should be same for all slices of same patient)
+            label = slices[0].get('label')
+            if label is None:
+                continue
+            
+            # Create patient-level prediction dict
+            patient_pred = {
+                'prediction': aggregated['prediction'],
+                'label': label,
+                'confidence': aggregated['confidence'],
+                'patient_id': patient_id,
+                'num_slices': aggregated['num_slices']
+            }
+            
+            # Add probabilities and logits if available (use first slice or aggregate)
+            if slices:
+                first_slice = slices[0]
+                patient_pred['probabilities'] = first_slice.get('probabilities', {})
+                patient_pred['probabilities_array'] = first_slice.get('probabilities_array', [])
+                patient_pred['probabilities_before_boosting'] = first_slice.get('probabilities_before_boosting')
+                patient_pred['logits'] = first_slice.get('logits', [])
+                patient_pred['used_context'] = first_slice.get('used_context', False)
+                patient_pred['context_from'] = first_slice.get('context_from', [])
+            
+            # Use step_name as-is (should match step_data keys)
+            if step_name in step_data:
+                step_data[step_name]['predictions'].append(aggregated['prediction'])
+                step_data[step_name]['labels'].append(label)
+                step_data[step_name]['full_predictions'].append(patient_pred)
+    
+    # Calculate patient-level metrics (same structure as slice-level)
+    patient_step_results = {}
+    for step_name, data in step_data.items():
+        if len(data['predictions']) > 0:
+            predictions = [int(p) if p is not None else 0 for p in data['predictions']]
+            labels = [int(l) if l is not None else 0 for l in data['labels']]
+            
+            acc = calculate_accuracy(predictions, labels)
+            num_predictions = len(predictions)
+            
+            # Analyze certainty metrics at patient level
+            certainty_metrics = analyze_certainty_metrics(data['full_predictions'], step_name)
+            
+            # Analyze overconfidence at patient level
+            overconfidence_metrics = analyze_overconfidence(data['full_predictions'], step_name)
+            
+            patient_step_results[step_name] = {
+                'accuracy': acc,
+                'num_samples': num_predictions,
+                'certainty_metrics': certainty_metrics,
+                'overconfidence_metrics': overconfidence_metrics
+            }
+        else:
+            patient_step_results[step_name] = {
+                'accuracy': 0.0,
+                'num_samples': 0,
+                'certainty_metrics': analyze_certainty_metrics([], step_name),
+                'overconfidence_metrics': analyze_overconfidence([], step_name)
+            }
+    
+    return patient_step_results
+
+
 def analyze_modality_combination_effect(
     mod1_predictions: List[Dict],
     mod2_predictions: List[Dict],
@@ -2457,12 +2829,12 @@ def save_results(results: Dict, output_path: str):
         return obj
     
     try:
-    serializable_results = convert_to_serializable(results)
-    
-    with open(output_path, 'w') as f:
-        json.dump(serializable_results, f, indent=2)
-    
-    print(f"Results saved to {output_path}")
+        serializable_results = convert_to_serializable(results)
+        
+        with open(output_path, 'w') as f:
+            json.dump(serializable_results, f, indent=2)
+        
+        print(f"Results saved to {output_path}")
     except Exception as e:
         print(f"ERROR: Failed to save results to {output_path}: {e}", file=sys.stderr)
         raise

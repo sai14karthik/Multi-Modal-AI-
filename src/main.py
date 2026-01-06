@@ -474,6 +474,7 @@ def main():
             first_mod_images = first_mod_images[:args.max_samples]
             if second_modality:
                 second_mod_images = second_mod_images[:args.max_samples]
+    
     if second_modality:
         print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
         print(f"       2. {second_modality} ({len(second_mod_images)} instances) without {first_modality} context")

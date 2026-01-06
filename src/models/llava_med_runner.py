@@ -144,16 +144,16 @@ class LLaVAMedRunner:
         # Generate with output_scores to get logits
         try:
             output_ids = self.model.generate(
-                input_ids,
-                images=image_tensor,
-                attention_mask=attention_mask,
-                do_sample=False,
-                max_new_tokens=3,  # Minimal tokens - just need one word
-                use_cache=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id,
-                num_beams=1,  # Greedy decoding (fastest)
-                repetition_penalty=1.0,  # No penalty for speed
+            input_ids,
+            images=image_tensor,
+            attention_mask=attention_mask,
+            do_sample=False,
+            max_new_tokens=3,  # Minimal tokens - just need one word
+            use_cache=True,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            num_beams=1,  # Greedy decoding (fastest)
+            repetition_penalty=1.0,  # No penalty for speed
                 return_dict_in_generate=True,
                 output_scores=True,
             )
