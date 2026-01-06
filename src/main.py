@@ -463,7 +463,6 @@ def main():
         second_mod_images = selected_second_mod
     else:
         # Original behavior: shuffle and limit independently (single modality case)
-        # Original behavior: shuffle and limit independently (single modality case)
         random.seed(42)
         random.shuffle(first_mod_images)
         if second_modality:
@@ -745,66 +744,66 @@ def main():
             }
         except Exception as e:
             print(f"Warning: Failed to aggregate PET (no context) predictions for patient {patient_id}: {e}", file=sys.stderr)
+    
+    print(f"\nStep 2 Complete: Processed {len(second_mod_images)} {second_modality} images WITHOUT {first_modality} context", flush=True)
+    unique_patients_pet_no_context = len(patient_pet_predictions_list_no_context)
+    total_pet_no_context = sum(len(preds) for preds in patient_pet_predictions_list_no_context.values())
+    print(f"  Aggregated {total_pet_no_context} {second_modality} slice predictions to {unique_patients_pet_no_context} patient-level predictions", flush=True)
+    
+    # STEP 3: PET with CT context
+    print(f"\n{'='*60}")
+    print(f"Step 3: {second_modality} ({len(second_mod_images)} instances) WITH {first_modality} context")
+    print(f"{'='*60}")
+    
+    # Match PET images to CT predictions by patient_id
+    # Goal: Each PET sample should get CT information from the same patient
+    # Patient i's PET scan gets Patient i's CT result (y_i)
+    filtered_second_mod_images = []
+    patients_with_ct = set(patient_predictions.keys())
         
-        print(f"\nStep 2 Complete: Processed {len(second_mod_images)} {second_modality} images WITHOUT {first_modality} context", flush=True)
-        unique_patients_pet_no_context = len(patient_pet_predictions_list_no_context)
-        total_pet_no_context = sum(len(preds) for preds in patient_pet_predictions_list_no_context.values())
-        print(f"  Aggregated {total_pet_no_context} {second_modality} slice predictions to {unique_patients_pet_no_context} patient-level predictions", flush=True)
-        
-        # STEP 3: PET with CT context
-        print(f"\n{'='*60}")
-        print(f"Step 3: {second_modality} ({len(second_mod_images)} instances) WITH {first_modality} context")
-        print(f"{'='*60}")
-        
-        # Match PET images to CT predictions by patient_id
-        # Goal: Each PET sample should get CT information from the same patient
-        # Patient i's PET scan gets Patient i's CT result (y_i)
-        filtered_second_mod_images = []
-        patients_with_ct = set(patient_predictions.keys())
-        
-        # Match each PET image to its corresponding CT prediction by patient_id
-        # IMPORTANT: Use the SAME extraction function as Step 1 to ensure matching
-        for img_info in second_mod_images:
-            patient_id = extract_patient_id_from_img(img_info)  # Use same function as Step 1
+    # Match each PET image to its corresponding CT prediction by patient_id
+    # IMPORTANT: Use the SAME extraction function as Step 1 to ensure matching
+    for img_info in second_mod_images:
+        patient_id = extract_patient_id_from_img(img_info)  # Use same function as Step 1
             
-            # Check if this patient has CT prediction from Step 1
-            if patient_id in patients_with_ct and first_modality in patient_predictions[patient_id]:
-                # This PET image will get CT information from the same patient
-                # Patient i's PET gets Patient i's CT result
-                filtered_second_mod_images.append(img_info)
+        # Check if this patient has CT prediction from Step 1
+        if patient_id in patients_with_ct and first_modality in patient_predictions[patient_id]:
+            # This PET image will get CT information from the same patient
+            # Patient i's PET gets Patient i's CT result
+            filtered_second_mod_images.append(img_info)
         
-        # Initialize PET predictions list for aggregation (with context)
-        patient_pet_predictions_list = {}
+    # Initialize PET predictions list for aggregation (with context)
+    patient_pet_predictions_list = {}
         
-        context_used_count = 0
-        total_pet_images = len(filtered_second_mod_images)
+    context_used_count = 0
+    total_pet_images = len(filtered_second_mod_images)
         
-        for img_info in tqdm(filtered_second_mod_images, desc=f"Processing {second_modality} with {first_modality} context", total=total_pet_images, **tqdm_kwargs):
-            # Make case_id unique by including image_path (image_id may not be unique)
-            image_basename = os.path.basename(img_info.get('image_path', ''))
-            case_id = f"{img_info['class'].lower()}_{image_basename}_{second_modality}"
-            label = img_info['label']
-            patient_id = extract_patient_id_from_img(img_info)  # Use same extraction as Step 1
+    for img_info in tqdm(filtered_second_mod_images, desc=f"Processing {second_modality} with {first_modality} context", total=total_pet_images, **tqdm_kwargs):
+        # Make case_id unique by including image_path (image_id may not be unique)
+        image_basename = os.path.basename(img_info.get('image_path', ''))
+        case_id = f"{img_info['class'].lower()}_{image_basename}_{second_modality}"
+        label = img_info['label']
+        patient_id = extract_patient_id_from_img(img_info)  # Use same extraction as Step 1
+        
+        if case_id not in results:
+            results[case_id] = []
+        
+        try:
+            img = Image.open(img_info['image_path']).convert('RGB')
             
-            if case_id not in results:
-                results[case_id] = []
-            
-            try:
-                img = Image.open(img_info['image_path']).convert('RGB')
+            # Get CT prediction result (y_i) from patient i (from Step 1)
+            # BEST STRATEGY: 1-to-1 matching with intelligent fallbacks
+            # 1. Try exact match by slice_index
+            # 2. If not found, try nearest slice_index
+            # 3. If still not found, use patient-level (highest confidence CT)
+            previous_predictions = None
+            context_used = False
                 
-                # Get CT prediction result (y_i) from patient i (from Step 1)
-                # BEST STRATEGY: 1-to-1 matching with intelligent fallbacks
-                # 1. Try exact match by slice_index
-                # 2. If not found, try nearest slice_index
-                # 3. If still not found, use patient-level (highest confidence CT)
-                previous_predictions = None
-                context_used = False
-                
-                if patient_id and patient_id in patient_predictions and first_modality in patient_predictions[patient_id]:
-                    matched_ct_prediction = None
-                    pet_slice_index = img_info.get('slice_index')
+            if patient_id and patient_id in patient_predictions and first_modality in patient_predictions[patient_id]:
+                matched_ct_prediction = None
+                pet_slice_index = img_info.get('slice_index')
                     
-                    if patient_id in patient_ct_predictions_list and pet_slice_index is not None:
+                if patient_id in patient_ct_predictions_list and pet_slice_index is not None:
                         # Strategy 1: Try exact match by slice_index
                         for ct_pred in patient_ct_predictions_list[patient_id]:
                             if 'slice_index' in ct_pred and ct_pred['slice_index'] == pet_slice_index:
@@ -821,125 +820,125 @@ def main():
                                         min_distance = distance
                                         matched_ct_prediction = ct_pred
                     
-                    # Strategy 3: Use matched CT prediction, or fallback to patient-level
-                    if matched_ct_prediction is not None:
+                # Strategy 3: Use matched CT prediction, or fallback to patient-level
+                if matched_ct_prediction is not None:
                         # Use 1-to-1 matched CT prediction (include confidence for boosting)
                         patient_i_ct_result = {
                             'prediction': matched_ct_prediction['prediction'],
                             'class_name': matched_ct_prediction['class_name'],
                             'confidence': matched_ct_prediction.get('confidence', 0.5)  # Include confidence for PET boosting
                         }
-                    else:
+                else:
                         # Fallback: Use patient-level CT prediction (highest confidence)
                         patient_i_ct_result = patient_predictions[patient_id][first_modality]
                         # Ensure confidence is present
                         if 'confidence' not in patient_i_ct_result:
                             patient_i_ct_result['confidence'] = 0.5
                     
-                    previous_predictions = {
+                previous_predictions = {
                         first_modality: patient_i_ct_result  # Patient i's CT result → Patient i's PET
-                    }
-                    context_used = True
-                    context_used_count += 1
-                
-                # Model.predict() receives:
-                # 1. Patient i's PET image
-                # 2. Patient i's CT output result (y_i) from Step 1
-                # The model uses prompts like: "Given that the CT scan showed high_grade, this PET scan shows..."
-                # Simple: "hey CT gave this result, what's for PET?"
-                prediction = model.predict(
-                    images={second_modality: img},  # Patient i's PET image
-                    available_modalities=[second_modality],
-                    batch_size=args.batch_size,
-                    preprocess=not args.no_preprocess,
-                    temperature=args.temperature,
-                    use_weighted_ensemble=not args.no_weighted_ensemble,
-                    try_both_swaps=not args.no_swap_test,
-                    aggressive_preprocess=args.aggressive_preprocess,
-                    previous_predictions=previous_predictions  # Patient i's CT result (y_i) → given to Patient i's PET
-                )
-                
-                # Store prediction for this patient
-                if patient_id is None:
-                    # Skip if no valid patient_id
-                    continue
-                
-                if patient_id not in patient_predictions:
-                    patient_predictions[patient_id] = {}
-                pred_class_name = args.class_names[prediction['prediction']]
-                
-                # Store all PET predictions for aggregation
-                if patient_id not in patient_pet_predictions_list:
-                    patient_pet_predictions_list[patient_id] = []
-                
-                pet_prediction_entry = {
-                    'image_id': img_info['image_id'],
-                    'prediction': prediction['prediction'],
-                    'class_name': pred_class_name,
-                    'confidence': prediction['confidence']
                 }
+                context_used = True
+                context_used_count += 1
                 
-                if 'slice_index' in img_info:
-                    pet_prediction_entry['slice_index'] = img_info['slice_index']
-                if 'series_uid' in img_info:
-                    pet_prediction_entry['series_uid'] = img_info['series_uid']
+            # Model.predict() receives:
+            # 1. Patient i's PET image
+            # 2. Patient i's CT output result (y_i) from Step 1
+            # The model uses prompts like: "Given that the CT scan showed high_grade, this PET scan shows..."
+            # Simple: "hey CT gave this result, what's for PET?"
+            prediction = model.predict(
+                images={second_modality: img},  # Patient i's PET image
+                available_modalities=[second_modality],
+                batch_size=args.batch_size,
+                preprocess=not args.no_preprocess,
+                temperature=args.temperature,
+                use_weighted_ensemble=not args.no_weighted_ensemble,
+                try_both_swaps=not args.no_swap_test,
+                aggressive_preprocess=args.aggressive_preprocess,
+                previous_predictions=previous_predictions  # Patient i's CT result (y_i) → given to Patient i's PET
+            )
                 
-                patient_pet_predictions_list[patient_id].append(pet_prediction_entry)
-                
-                # Store PET prediction (with CT context) with slice_index for accurate matching
-                pet_result_with_context = {
-                    'modalities_used': [second_modality],
-                    'prediction': prediction['prediction'],
-                    'confidence': prediction['confidence'],
-                    'label': label,
-                    'used_context': context_used,
-                    'context_from': [first_modality] if context_used else [],
-                    'probabilities': prediction.get('probabilities', {}),
-                    'probabilities_array': prediction.get('probabilities_array', []),
-                    'probabilities_before_boosting': prediction.get('probabilities_before_boosting'),
-                    'logits': prediction.get('logits', []),
-                    'patient_id': patient_id
-                }
-                # Add slice_index if available for matching
-                if 'slice_index' in img_info:
-                    pet_result_with_context['slice_index'] = img_info['slice_index']
-                if 'image_id' in img_info:
-                    pet_result_with_context['image_id'] = img_info['image_id']
-                results[case_id].append(pet_result_with_context)
-            except Exception as e:
-                print(f"Error processing {case_id} with {second_modality}: {e}", file=sys.stderr)
-                traceback.print_exc()
-        
-        # Aggregate PET predictions per patient
-        patient_aggregated_pet = {}
-        for patient_id, slices in patient_pet_predictions_list.items():
+            # Store prediction for this patient
             if patient_id is None:
-                continue  # Skip invalid patient_ids
-            try:
-                patient_aggregated_pet[patient_id] = aggregate_patient_predictions(slices)
-                # Update patient_predictions with aggregated result
-                if patient_id and patient_id in patient_predictions:
-                    patient_predictions[patient_id][second_modality] = {
+                # Skip if no valid patient_id
+                continue
+                
+            if patient_id not in patient_predictions:
+                patient_predictions[patient_id] = {}
+            pred_class_name = args.class_names[prediction['prediction']]
+                
+            # Store all PET predictions for aggregation
+            if patient_id not in patient_pet_predictions_list:
+                patient_pet_predictions_list[patient_id] = []
+                
+            pet_prediction_entry = {
+                'image_id': img_info['image_id'],
+                'prediction': prediction['prediction'],
+                'class_name': pred_class_name,
+                'confidence': prediction['confidence']
+            }
+                
+            if 'slice_index' in img_info:
+                pet_prediction_entry['slice_index'] = img_info['slice_index']
+            if 'series_uid' in img_info:
+                pet_prediction_entry['series_uid'] = img_info['series_uid']
+                
+            patient_pet_predictions_list[patient_id].append(pet_prediction_entry)
+                
+            # Store PET prediction (with CT context) with slice_index for accurate matching
+            pet_result_with_context = {
+                'modalities_used': [second_modality],
+                'prediction': prediction['prediction'],
+                'confidence': prediction['confidence'],
+                'label': label,
+                'used_context': context_used,
+                'context_from': [first_modality] if context_used else [],
+                'probabilities': prediction.get('probabilities', {}),
+                'probabilities_array': prediction.get('probabilities_array', []),
+                'probabilities_before_boosting': prediction.get('probabilities_before_boosting'),
+                'logits': prediction.get('logits', []),
+                'patient_id': patient_id
+            }
+            # Add slice_index if available for matching
+            if 'slice_index' in img_info:
+                pet_result_with_context['slice_index'] = img_info['slice_index']
+            if 'image_id' in img_info:
+                pet_result_with_context['image_id'] = img_info['image_id']
+            results[case_id].append(pet_result_with_context)
+        except Exception as e:
+            print(f"Error processing {case_id} with {second_modality}: {e}", file=sys.stderr)
+            traceback.print_exc()
+        
+    # Aggregate PET predictions per patient
+    patient_aggregated_pet = {}
+    for patient_id, slices in patient_pet_predictions_list.items():
+        if patient_id is None:
+            continue  # Skip invalid patient_ids
+        try:
+            patient_aggregated_pet[patient_id] = aggregate_patient_predictions(slices)
+            # Update patient_predictions with aggregated result
+            if patient_id and patient_id in patient_predictions:
+                patient_predictions[patient_id][second_modality] = {
                         'prediction': patient_aggregated_pet[patient_id]['prediction'],
                         'class_name': args.class_names[patient_aggregated_pet[patient_id]['prediction']],
                         'confidence': patient_aggregated_pet[patient_id]['confidence']
-                    }
-            except Exception as e:
-                print(f"Warning: Failed to aggregate PET predictions for patient {patient_id}: {e}", file=sys.stderr)
-                # Use first slice as fallback
-                if slices:
-                    first_slice = slices[0]
-                    if patient_id and patient_id in patient_predictions:
+                }
+        except Exception as e:
+            print(f"Warning: Failed to aggregate PET predictions for patient {patient_id}: {e}", file=sys.stderr)
+            # Use first slice as fallback
+            if slices:
+                first_slice = slices[0]
+                if patient_id and patient_id in patient_predictions:
                         patient_predictions[patient_id][second_modality] = {
                             'prediction': first_slice.get('prediction', 0),
                             'class_name': args.class_names[first_slice.get('prediction', 0)],
                             'confidence': first_slice.get('confidence', 0.5)
                         }
         
-        total_pet_predictions = sum(len(preds) for preds in patient_pet_predictions_list.values())
-        unique_patients_pet = len(patient_pet_predictions_list)
-        print(f"\nStep 3 Complete: Processed {context_used_count} {second_modality} images using {first_modality} context", flush=True)
-        print(f"  Aggregated {total_pet_predictions} {second_modality} slice predictions to {unique_patients_pet} patient-level predictions", flush=True)
+    total_pet_predictions = sum(len(preds) for preds in patient_pet_predictions_list.values())
+    unique_patients_pet = len(patient_pet_predictions_list)
+    print(f"\nStep 3 Complete: Processed {context_used_count} {second_modality} images using {first_modality} context", flush=True)
+    print(f"  Aggregated {total_pet_predictions} {second_modality} slice predictions to {unique_patients_pet} patient-level predictions", flush=True)
     
     # Evaluate results
     print("\nEvaluating results...", flush=True)
@@ -1017,7 +1016,7 @@ def main():
                     ct_aggregated = aggregate_patient_predictions(ct_slices)
                     # Aggregate PET predictions for this patient
                     pet_aggregated = aggregate_patient_predictions(pet_slices)
-                    
+                
                     # Add full prediction info for certainty analysis
                     # For patient-level, use pre-boosting probabilities for realistic certainty metrics
                     # For CT: use aggregated confidence (no boosting applied to CT)
@@ -1079,22 +1078,26 @@ def main():
                 evaluation_results['patient_level_agreement'] = patient_agreement_analysis
             
             # Analyze CT context influence on PET predictions
-            from src.utils.evaluation import analyze_ct_context_influence
-            pet_predictions_for_context = []
-            for case_id, case_results in results.items():
-                for result in case_results:
-                    mods_used = result.get('modalities_used', [])
-                    if len(mods_used) == 1 and mods_used[0] == args.modalities[1]:
-                        # This is a PET prediction
-                        if result.get('used_context', False):
-                            pet_predictions_for_context.append(result)
-            
-            if pet_predictions_for_context:
-                context_influence = analyze_ct_context_influence(pet_predictions_for_context)
-                evaluation_results['ct_context_influence'] = context_influence
-        except Exception as e:
-                print(f"Warning: Failed to complete patient-level analysis: {e}", file=sys.stderr, flush=True)
+            try:
+                from src.utils.evaluation import analyze_ct_context_influence
+                pet_predictions_for_context = []
+                for case_id, case_results in results.items():
+                    for result in case_results:
+                        mods_used = result.get('modalities_used', [])
+                        if len(mods_used) == 1 and mods_used[0] == args.modalities[1]:
+                            # This is a PET prediction
+                            if result.get('used_context', False):
+                                pet_predictions_for_context.append(result)
+                
+                if pet_predictions_for_context:
+                    context_influence = analyze_ct_context_influence(pet_predictions_for_context)
+                    evaluation_results['ct_context_influence'] = context_influence
+            except Exception as e:
+                print(f"Warning: Failed to analyze CT context influence: {e}", file=sys.stderr, flush=True)
                 traceback.print_exc()
+        except Exception as e:
+            print(f"Warning: Failed to complete patient-level analysis: {e}", file=sys.stderr, flush=True)
+            traceback.print_exc()
     
     # Print results
     print_evaluation_results(evaluation_results)

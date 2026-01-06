@@ -619,7 +619,7 @@ def print_evaluation_results(evaluation_results: Dict):
             # CT vs CT+PET disagreement (shows if CT context improves agreement)
             if disagreement_rate_ct_vs_combined is not None:
                 display_disagreement = disagreement_rate_ct_vs_combined
-            else:
+        else:
                 # Fallback: use CT vs PET if CT+PET calculation failed
                 display_disagreement = disagreement_rate_ct_vs_pet
         else:
@@ -1439,12 +1439,28 @@ def analyze_logit_similarity(
             'num_pairs': 0
         }
     
+    # Additional diagnostics: check if logits are identical vs proportional
+    identical_count = 0
+    proportional_count = 0
+    for mod1_logits_arr, mod2_logits_arr in matched_pairs:
+        if len(mod1_logits_arr) == len(mod2_logits_arr) and len(mod1_logits_arr) > 0:
+            if np.allclose(mod1_logits_arr, mod2_logits_arr, atol=1e-6):
+                identical_count += 1
+            elif len(mod1_logits_arr) == 2:
+                # For binary classification, check if proportional
+                ratio1 = mod1_logits_arr[0] / mod1_logits_arr[1] if mod1_logits_arr[1] != 0 else float('inf')
+                ratio2 = mod2_logits_arr[0] / mod2_logits_arr[1] if mod2_logits_arr[1] != 0 else float('inf')
+                if np.isclose(ratio1, ratio2, atol=1e-3):
+                    proportional_count += 1
+    
     return {
         'avg_cosine_similarity': float(np.mean(similarities)),
         'std_cosine_similarity': float(np.std(similarities)),
         'min_cosine_similarity': float(np.min(similarities)),
         'max_cosine_similarity': float(np.max(similarities)),
-        'num_pairs': len(similarities)
+        'num_pairs': len(similarities),
+        'identical_logits_count': identical_count,
+        'proportional_logits_count': proportional_count
     }
 
 
@@ -2441,12 +2457,12 @@ def save_results(results: Dict, output_path: str):
         return obj
     
     try:
-        serializable_results = convert_to_serializable(results)
-        
-        with open(output_path, 'w') as f:
-            json.dump(serializable_results, f, indent=2)
-        
-        print(f"Results saved to {output_path}")
+    serializable_results = convert_to_serializable(results)
+    
+    with open(output_path, 'w') as f:
+        json.dump(serializable_results, f, indent=2)
+    
+    print(f"Results saved to {output_path}")
     except Exception as e:
         print(f"ERROR: Failed to save results to {output_path}: {e}", file=sys.stderr)
         raise
