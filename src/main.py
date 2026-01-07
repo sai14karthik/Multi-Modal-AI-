@@ -467,7 +467,7 @@ def main():
         random.shuffle(first_mod_images)
         if second_modality:
             random.shuffle(second_mod_images)
-        
+    
         # Only apply max_samples limit for single-modality case
         # (For multi-modality, max_samples is already applied per patient above)
         if args.max_samples is not None and args.max_samples > 0:
@@ -1000,69 +1000,73 @@ def main():
                             patient_pet_preds[patient_id].append(result)
             
             # Aggregate to patient-level for agreement analysis
+            # CRITICAL: Sort patient_ids to ensure consistent ordering for matching
+            common_patient_ids = sorted(set(patient_ct_preds.keys()) & set(patient_pet_preds.keys()))
+            
             patient_level_ct = []
             patient_level_pet = []
             patient_ids_list = []
             
-            for patient_id in set(list(patient_ct_preds.keys()) + list(patient_pet_preds.keys())):
-                if patient_id in patient_ct_preds and patient_id in patient_pet_preds:
-                    ct_slices = patient_ct_preds[patient_id]
-                    pet_slices = patient_pet_preds[patient_id]
-                    
-                    # Skip if either list is empty
-                    if not ct_slices or not pet_slices:
-                        continue
-                    
-                    # Aggregate CT predictions for this patient
-                    ct_aggregated = aggregate_patient_predictions(ct_slices)
-                    # Aggregate PET predictions for this patient
-                    pet_aggregated = aggregate_patient_predictions(pet_slices)
+            for patient_id in common_patient_ids:
+                ct_slices = patient_ct_preds[patient_id]
+                pet_slices = patient_pet_preds[patient_id]
                 
-                    # Add full prediction info for certainty analysis
-                    # For patient-level, use pre-boosting probabilities for realistic certainty metrics
-                    # For CT: use aggregated confidence (no boosting applied to CT)
-                    ct_conf = ct_aggregated['confidence']
-                    
-                    # For PET: calculate confidence from pre-boosting probabilities (shows real model behavior)
-                    # Aggregate pre-boosting probabilities across slices for this patient
-                    pet_probs_before_list = []
-                    for pet_slice in pet_slices:
-                        probs_before = pet_slice.get('probabilities_before_boosting')
-                        if probs_before is not None and len(probs_before) >= 2:
-                            pet_probs_before_list.append(np.array(probs_before))
-                    
-                    if pet_probs_before_list:
-                        # Average pre-boosting probabilities across slices
-                        avg_probs_before = np.mean(pet_probs_before_list, axis=0)
-                        pet_conf = float(np.max(avg_probs_before))
+                # Skip if either list is empty
+                if not ct_slices or not pet_slices:
+                    continue
+                
+                # Aggregate CT predictions for this patient
+                ct_aggregated = aggregate_patient_predictions(ct_slices)
+                # Aggregate PET predictions for this patient
+                pet_aggregated = aggregate_patient_predictions(pet_slices)
+            
+                # Add full prediction info for certainty analysis
+                # For patient-level, use pre-boosting probabilities for realistic certainty metrics
+                # For CT: use aggregated confidence (no boosting applied to CT)
+                ct_conf = ct_aggregated['confidence']
+                
+                # For PET: calculate confidence from pre-boosting probabilities (shows real model behavior)
+                # Aggregate pre-boosting probabilities across slices for this patient
+                pet_probs_before_list = []
+                for pet_slice in pet_slices:
+                    probs_before = pet_slice.get('probabilities_before_boosting')
+                    if probs_before is not None and len(probs_before) >= 2:
+                        pet_probs_before_list.append(np.array(probs_before))
+                
+                if pet_probs_before_list:
+                    # Average pre-boosting probabilities across slices
+                    avg_probs_before = np.mean(pet_probs_before_list, axis=0)
+                    pet_conf = float(np.max(avg_probs_before))
+                else:
+                    # Fallback: use first slice's pre-boosting or aggregated confidence
+                    first_pet_slice = pet_slices[0]
+                    probs_before = first_pet_slice.get('probabilities_before_boosting')
+                    if probs_before is not None and len(probs_before) >= 2:
+                        pet_conf = float(np.max(np.array(probs_before)))
                     else:
-                        # Fallback: use first slice's pre-boosting or aggregated confidence
-                        first_pet_slice = pet_slices[0]
-                        probs_before = first_pet_slice.get('probabilities_before_boosting')
-                        if probs_before is not None and len(probs_before) >= 2:
-                            pet_conf = float(np.max(np.array(probs_before)))
-                        else:
-                            pet_conf = pet_aggregated['confidence']
-                    
-                    ct_full = {
-                        'prediction': ct_aggregated['prediction'],
-                        'confidence': ct_conf,
-                        'probabilities': ct_slices[0].get('probabilities', {}),
-                        'probabilities_array': ct_slices[0].get('probabilities_array', []),
-                        'logits': ct_slices[0].get('logits', [])
-                    }
-                    pet_full = {
-                        'prediction': pet_aggregated['prediction'],
-                        'confidence': pet_conf,  # Use pre-boosting confidence
-                        'probabilities': pet_slices[0].get('probabilities', {}),
-                        'probabilities_array': pet_slices[0].get('probabilities_array', []),
-                        'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting'),
-                        'logits': pet_slices[0].get('logits', [])
-                    }
-                    
-                    patient_level_ct.append(ct_full)
-                    patient_level_pet.append(pet_full)
-                    patient_ids_list.append(patient_id)
+                        pet_conf = pet_aggregated['confidence']
+                
+                ct_full = {
+                    'prediction': ct_aggregated['prediction'],
+                    'confidence': ct_conf,
+                    'probabilities': ct_slices[0].get('probabilities', {}),
+                    'probabilities_array': ct_slices[0].get('probabilities_array', []),
+                    'logits': ct_slices[0].get('logits', []),
+                    'patient_id': patient_id  # Add patient_id for verification
+                }
+                pet_full = {
+                    'prediction': pet_aggregated['prediction'],
+                    'confidence': pet_conf,  # Use pre-boosting confidence
+                    'probabilities': pet_slices[0].get('probabilities', {}),
+                    'probabilities_array': pet_slices[0].get('probabilities_array', []),
+                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting'),
+                    'logits': pet_slices[0].get('logits', []),
+                    'patient_id': patient_id  # Add patient_id for verification
+                }
+                
+                patient_level_ct.append(ct_full)
+                patient_level_pet.append(pet_full)
+                patient_ids_list.append(patient_id)
             
             # Analyze patient-level vs slice-level agreement
             if patient_level_ct and patient_level_pet:

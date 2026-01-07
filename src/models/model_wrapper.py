@@ -1024,16 +1024,16 @@ class MultimodalModelWrapper:
                     # PET is moderately confident - favor PET strongly
                     pet_boost_factor = 7.0   # Increased from 5.0
                     # DO NOT boost CT
-        else:
-            # PET is not confident - still favor PET (it has more information)
-            pet_boost_factor = 5.0   # Increased from 3.5
-            # DO NOT boost CT - trust PET's informed judgment
+                else:
+                    # PET is not confident - still favor PET (it has more information)
+                    pet_boost_factor = 5.0   # Increased from 3.5
+                    # DO NOT boost CT - trust PET's informed judgment
                 
-            # Apply boost ONLY to PET (not CT) - pet_class_idx is defined above in this block
-            # Safety check: only apply if pet_class_idx is defined (should always be in this block)
-            if 'pet_class_idx' in locals():
-                probs[pet_class_idx] = probs[pet_class_idx] * pet_boost_factor
-            # Do NOT boost CT when PET disagrees - this is key to improvement!
+                # Apply boost ONLY to PET (not CT) - pet_class_idx is defined above in this block
+                # Safety check: only apply if pet_class_idx is defined (should always be in this block)
+                if 'pet_class_idx' in locals():
+                    probs[pet_class_idx] = probs[pet_class_idx] * pet_boost_factor
+                # Do NOT boost CT when PET disagrees - this is key to improvement!
         
         # Renormalize probabilities after boosting
         probs = probs / probs.sum()

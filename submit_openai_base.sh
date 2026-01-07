@@ -1,8 +1,11 @@
 #!/bin/bash
-# Submit OpenAI CLIP Base job to Newton
+# Submit OpenAI CLIP Base job to Newton (HPC cluster)
 # Usage: ./submit_openai_base.sh [test]
 #   - Without arguments: Full dataset run
 #   - With "test": Quick test with 10 samples
+#
+# NOTE: This script requires SLURM (sbatch) and must be run on Newton cluster.
+# For local testing, use: ./run_openai_base_local.sh [test]
 
 TEST_MODE=false
 if [ "$1" == "test" ]; then

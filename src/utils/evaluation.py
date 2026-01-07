@@ -1631,10 +1631,21 @@ def analyze_patient_level_agreement(
         }
     
     # Calculate patient-level agreement
+    # CRITICAL: Match by patient_id to ensure correct pairing (defensive check)
     patient_agreements = 0
     patient_disagreements = 0
     
-    for ct_pred, pet_pred in zip(patient_level_ct, patient_level_pet):
+    # Build lookup dicts by patient_id for safe matching
+    ct_by_patient = {pred.get('patient_id'): pred for pred in patient_level_ct if pred.get('patient_id') is not None}
+    pet_by_patient = {pred.get('patient_id'): pred for pred in patient_level_pet if pred.get('patient_id') is not None}
+    
+    # Match by patient_id (more robust than zip)
+    matched_patients = set(ct_by_patient.keys()) & set(pet_by_patient.keys())
+    
+    for patient_id in sorted(matched_patients):
+        ct_pred = ct_by_patient[patient_id]
+        pet_pred = pet_by_patient[patient_id]
+        
         ct_pred_class = ct_pred.get('prediction')
         pet_pred_class = pet_pred.get('prediction')
         
@@ -1642,6 +1653,17 @@ def analyze_patient_level_agreement(
             patient_agreements += 1
         else:
             patient_disagreements += 1
+    
+    # Fallback: if patient_id matching fails, use zip (original behavior)
+    if not matched_patients and len(patient_level_ct) == len(patient_level_pet):
+        for ct_pred, pet_pred in zip(patient_level_ct, patient_level_pet):
+            ct_pred_class = ct_pred.get('prediction')
+            pet_pred_class = pet_pred.get('prediction')
+            
+            if ct_pred_class == pet_pred_class:
+                patient_agreements += 1
+            else:
+                patient_disagreements += 1
     
     total_patients = len(patient_level_ct)
     patient_agreement_rate = patient_agreements / total_patients if total_patients > 0 else 0.0
@@ -2633,8 +2655,10 @@ def calculate_patient_level_results(
                 elif len(mods_used) == len(modalities) and len(modalities) > 1:
                     step_name = '+'.join(modalities)
                 else:
-                    continue
-            else:
+                    continue  # Skip if can't determine step_name
+            
+            # If step_name is still None, skip this result
+            if step_name is None:
                 continue
             
             # Use step_name as-is (already mapped correctly)

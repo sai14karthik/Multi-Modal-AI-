@@ -25,10 +25,6 @@ rsync -avz --progress \
   requirements.txt \
   README.md \
   run.sh \
-  test_models.py \
-  test_performance.py \
-  quick_test_models.py \
-  test_with_samples.sh \
   data/dataset_config.yaml \
   .env.example \
   submit_top5_models.sh \
@@ -37,7 +33,6 @@ rsync -avz --progress \
   submit_openai_base.sh \
   run_llava_med.py \
   submit_5_new_models.sh \
-  test_quick.sh \
   sync_to_newton.sh \
   verify_sync.sh \
   third_party/llava-med/llava/model/builder.py \
