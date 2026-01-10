@@ -2854,10 +2854,10 @@ def save_results(results: Dict, output_path: str):
     
     try:
         serializable_results = convert_to_serializable(results)
-        
+    
         with open(output_path, 'w') as f:
             json.dump(serializable_results, f, indent=2)
-        
+    
         print(f"Results saved to {output_path}")
     except Exception as e:
         print(f"ERROR: Failed to save results to {output_path}: {e}", file=sys.stderr)

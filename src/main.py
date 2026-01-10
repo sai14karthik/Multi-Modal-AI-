@@ -988,16 +988,22 @@ def main():
                         continue
                     
                     mods_used = result.get('modalities_used', [])
+                    used_context = result.get('used_context', False)
+                    
                     if len(mods_used) == 1:
                         mod = mods_used[0]
                         if mod == args.modalities[0]:
+                            # CT predictions (no context)
                             if patient_id not in patient_ct_preds:
                                 patient_ct_preds[patient_id] = []
                             patient_ct_preds[patient_id].append(result)
                         elif mod == args.modalities[1]:
-                            if patient_id not in patient_pet_preds:
-                                patient_pet_preds[patient_id] = []
-                            patient_pet_preds[patient_id].append(result)
+                            # CRITICAL: Only collect PET WITHOUT context for agreement analysis
+                            # (PET with context is CT+PET, not pure PET)
+                            if not used_context:
+                                if patient_id not in patient_pet_preds:
+                                    patient_pet_preds[patient_id] = []
+                                patient_pet_preds[patient_id].append(result)
             
             # Aggregate to patient-level for agreement analysis
             # CRITICAL: Sort patient_ids to ensure consistent ordering for matching
@@ -1019,7 +1025,7 @@ def main():
                 ct_aggregated = aggregate_patient_predictions(ct_slices)
                 # Aggregate PET predictions for this patient
                 pet_aggregated = aggregate_patient_predictions(pet_slices)
-            
+                
                 # Add full prediction info for certainty analysis
                 # For patient-level, use pre-boosting probabilities for realistic certainty metrics
                 # For CT: use aggregated confidence (no boosting applied to CT)

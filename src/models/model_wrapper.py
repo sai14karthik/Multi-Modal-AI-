@@ -735,19 +735,19 @@ class MultimodalModelWrapper:
             image = Image.blend(image, equalized_rgb, 0.4)
         else:
             # Standard preprocessing (balanced)
-                    # Enhance contrast for medical images
-                    enhancer = ImageEnhance.Contrast(image)
-                    image = enhancer.enhance(1.3)  # Increase contrast by 30%
-                    # Enhance sharpness slightly
-                    enhancer = ImageEnhance.Sharpness(image)
-                    image = enhancer.enhance(1.1)
+            # Enhance contrast for medical images
+            enhancer = ImageEnhance.Contrast(image)
+        image = enhancer.enhance(1.3)  # Increase contrast by 30%
+        # Enhance sharpness slightly
+        enhancer = ImageEnhance.Sharpness(image)
+        image = enhancer.enhance(1.1)
         
-                    # Apply histogram equalization for better visibility
-                    # Convert to grayscale for histogram equalization
-                    gray = np.array(image.convert('L'))
-                    # Apply histogram equalization
-                    equalized = ImageOps.equalize(Image.fromarray(gray))
-                    # Convert back to RGB
+        # Apply histogram equalization for better visibility
+        # Convert to grayscale for histogram equalization
+        gray = np.array(image.convert('L'))
+        # Apply histogram equalization
+        equalized = ImageOps.equalize(Image.fromarray(gray))
+        # Convert back to RGB
         equalized_rgb = Image.new('RGB', equalized.size)
         equalized_rgb.paste(equalized)
         
@@ -1029,11 +1029,11 @@ class MultimodalModelWrapper:
                     pet_boost_factor = 5.0   # Increased from 3.5
                     # DO NOT boost CT - trust PET's informed judgment
                 
-                # Apply boost ONLY to PET (not CT) - pet_class_idx is defined above in this block
-                # Safety check: only apply if pet_class_idx is defined (should always be in this block)
-                if 'pet_class_idx' in locals():
-                    probs[pet_class_idx] = probs[pet_class_idx] * pet_boost_factor
-                # Do NOT boost CT when PET disagrees - this is key to improvement!
+                    # Apply boost ONLY to PET (not CT) - pet_class_idx is defined above in this block
+                    # Safety check: only apply if pet_class_idx is defined (should always be in this block)
+                    if 'pet_class_idx' in locals():
+                        probs[pet_class_idx] = probs[pet_class_idx] * pet_boost_factor
+                    # Do NOT boost CT when PET disagrees - this is key to improvement!
         
         # Renormalize probabilities after boosting
         probs = probs / probs.sum()
