@@ -30,6 +30,7 @@ rsync -avz --progress \
   submit_top5_models.sh \
   submit_llava_med.sh \
   submit_llava_med_newton.sh \
+  run_llava_med_newton.sh \
   submit_openai_base.sh \
   run_llava_med.py \
   submit_5_new_models.sh \
