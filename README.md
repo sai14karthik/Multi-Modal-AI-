@@ -1,13 +1,6 @@
 # Multi-Modal-AI Project
 
 
-## Dataset
-
-### Recommended: TCIA Lung-PET-CT-Dx
-
-- 355 patients with paired CT + PET series and clinical metadata (histopathology, smoking history, etc.).
-- Prepare the dataset using the new script:
-
 ```bash
 python -m src.data.prepare_lung_pet_ct \
     --raw_root dataset/manifest-<id>/Lung-PET-CT-Dx \
