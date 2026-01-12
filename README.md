@@ -1,21 +1,8 @@
 # Multi-Modal-AI Project
 
+This project evaluates multi-modal AI models (CLIP, LLaVA, LLaVA-Med) on medical imaging datasets with sequential modality processing (CT → PET → CT+PET).
 
-```bash
-python -m src.data.prepare_lung_pet_ct \
-    --raw_root dataset/manifest-<id>/Lung-PET-CT-Dx \
-    --metadata_csv dataset/manifest-<id>/metadata.csv \
-    --clinical_excel dataset/statistics-clinical-20201221.xlsx \
-    --data_root data \
-    --dataset_name Lung-PET-CT-Dx \
-    --label_strategy histology_grade \
-    --ct_slice_interval 3 \
-    --pet_slice_interval 1
-```
-
-This converts all CT/PET DICOM slices into PNGs under `data/Lung-PET-CT-Dx/{CT,PT}/<class>` and writes `metadata.csv` with patient IDs, modality identifiers, histology-based class labels (`high_grade`, `low_grade`), and deterministic train/val/test splits.
-
-
+**Note:** The dataset is already prepared. PNG images and `metadata.csv` are available in `data/Lung-PET-CT-Dx/`.
 
 ## Installation
 
