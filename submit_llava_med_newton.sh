@@ -222,7 +222,7 @@ if [ "$TEST_MODE" = true ]; then
     echo "Monitor: squeue -u \$USER"
     echo "Logs:    tail -f output_llava_med_test_${JOB_ID}.log"
     echo ""
-    echo "⏱  Note: Test mode runs 10 samples (~1-2 hours)"
+   
 else
     echo "📝 Submitting LLaVA-Med FULL job..."
     JOB_ID=$(sbatch "$JOB_SCRIPT" | awk '{print $4}')
@@ -231,7 +231,7 @@ else
     echo "Monitor: squeue -u \$USER"
     echo "Logs:    tail -f output_llava_med_${JOB_ID}.log"
     echo ""
-    echo "⏱  Note: Full run may take 8-12 hours"
+  
 fi
 
 # Clean up temp script
