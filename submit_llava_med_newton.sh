@@ -13,9 +13,9 @@ cd "$SCRIPT_DIR"
 TEST_MODE=false
 if [ "$1" == "test" ]; then
     TEST_MODE=true
-    echo "🧪 TEST MODE: Running with 10 samples..."
+    echo "TEST MODE: Running with 10 samples..."
 else
-    echo "🚀 FULL MODE: Running on full dataset..."
+    echo "FULL MODE: Running on full dataset..."
 fi
 echo ""
 
@@ -215,7 +215,7 @@ chmod +x "$JOB_SCRIPT"
 
 # Submit job
 if [ "$TEST_MODE" = true ]; then
-    echo "📝 Submitting LLaVA-Med TEST job..."
+    echo "Submitting LLaVA-Med TEST job..."
     JOB_ID=$(sbatch "$JOB_SCRIPT" | awk '{print $4}')
     echo "   ✓ Test job $JOB_ID submitted"
     echo ""
@@ -224,7 +224,7 @@ if [ "$TEST_MODE" = true ]; then
     echo ""
    
 else
-    echo "📝 Submitting LLaVA-Med FULL job..."
+    echo "Submitting LLaVA-Med FULL job..."
     JOB_ID=$(sbatch "$JOB_SCRIPT" | awk '{print $4}')
     echo "   ✓ Job $JOB_ID submitted"
     echo ""
@@ -238,4 +238,4 @@ fi
 rm -f "$JOB_SCRIPT"
 
 echo ""
-echo "✅ Job submission complete!"
+echo "Job submission complete!"

@@ -10,9 +10,9 @@
 TEST_MODE=false
 if [ "$1" == "test" ]; then
     TEST_MODE=true
-    echo "🧪 TEST MODE: Running with 10 samples..."
+    echo "TEST MODE: Running with 10 samples..."
 else
-    echo "🚀 FULL MODE: Running on full dataset..."
+    echo "FULL MODE: Running on full dataset..."
 fi
 echo ""
 
@@ -89,18 +89,18 @@ chmod +x "$JOB_SCRIPT"
 
 # Submit job
 if [ "$TEST_MODE" = true ]; then
-    echo "📝 Submitting OpenAI CLIP Base TEST job..."
+    echo "Submitting OpenAI CLIP Base TEST job..."
     JOB_ID=$(sbatch "$JOB_SCRIPT" | awk '{print $4}')
-    echo "   ✅ Test job $JOB_ID submitted"
+    echo "   Test job $JOB_ID submitted"
     echo ""
     echo "   Monitor: squeue -u \$USER"
     echo "   Logs: tail -f output_openai-base-test_${JOB_ID}.log"
     echo ""
     echo "⏱️  Note: Test mode runs 10 samples (~20-40 minutes)"
 else
-    echo "📝 Submitting OpenAI CLIP Base job..."
+    echo "Submitting OpenAI CLIP Base job..."
     JOB_ID=$(sbatch "$JOB_SCRIPT" | awk '{print $4}')
-    echo "   ✅ Job $JOB_ID submitted"
+    echo "   Job $JOB_ID submitted"
     echo ""
     echo "   Monitor: squeue -u \$USER"
     echo "   Logs: tail -f output_openai-base_${JOB_ID}.log"

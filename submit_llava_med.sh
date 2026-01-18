@@ -96,7 +96,7 @@ chmod +x "$JOB_SCRIPT"
 
 # Submit job
 if [ "$TEST_MODE" = true ]; then
-    echo "📝 Submitting LLaVA-Med TEST job..."
+    echo "Submitting LLaVA-Med TEST job..."
     JOB_ID=$(sbatch "$JOB_SCRIPT" | awk '{print $4}')
     echo "    Test job $JOB_ID submitted"
     echo ""

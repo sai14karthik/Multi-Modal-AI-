@@ -112,8 +112,15 @@ def get_all_images_by_modality(
         image_files = glob.glob(os.path.join(class_path, '*'))
         image_files = [f for f in image_files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.dcm'))]
         
-        # Use tqdm for progress indication
-        for img_path in tqdm(image_files, desc=f"Loading {modality}/{class_name}", leave=False):
+        # Use tqdm for progress indication (minimal output to avoid overlapping)
+        # Only show progress for large batches, completely disable for small batches to avoid "0/1" display
+        show_progress = len(image_files) > 1000  # Only show for large batches
+        iterator = tqdm(image_files, desc=f"Loading {modality}/{class_name}", 
+                       leave=False, disable=not show_progress,
+                       ncols=80, mininterval=2.0, miniters=500,
+                       bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}') if show_progress else image_files
+        
+        for img_path in iterator:
             filename = os.path.basename(img_path)
             img_number = _extract_image_number(filename)
             rel_path = os.path.relpath(img_path, data_root)
@@ -158,9 +165,8 @@ def get_all_images_by_modality(
             all_images.append({
                 'image_path': img_path,
                 'class': class_name,
-                'label': class_to_label.get(class_name, -1),
-                'image_id': img_number,
-                'modality': modality,
+                'label': class_to_label[class_name],
+                'image_id': img_path,  # Use full path as image_id for uniqueness
                 'patient_id': patient_id,
                 'slice_index': slice_index,
                 'series_uid': series_uid

@@ -45,7 +45,12 @@ def calculate_entropy(probabilities: np.ndarray) -> float:
     # Ensure probabilities sum to 1 and are non-negative
     probs = np.array(probabilities)
     probs = np.clip(probs, 1e-10, 1.0)  # Avoid log(0)
-    probs = probs / probs.sum()  # Renormalize
+    probs_sum = probs.sum()
+    if probs_sum > 0:
+        probs = probs / probs_sum  # Renormalize
+    else:
+        # Fallback: uniform distribution if all zeros
+        probs = np.ones_like(probs) / len(probs)
     
     # Calculate entropy: H(X) = -sum(p(x) * log2(p(x)))
     log_probs = np.log2(probs)
@@ -136,7 +141,12 @@ def calculate_calibrated_probabilities(logits: np.ndarray, temperature: float = 
     # Apply temperature scaling: softmax(logits / temperature)
     scaled_logits = logits_arr / temperature
     exp_logits = np.exp(scaled_logits - np.max(scaled_logits))  # Numerical stability
-    probs = exp_logits / exp_logits.sum()
+    exp_sum = exp_logits.sum()
+    if exp_sum > 0:
+        probs = exp_logits / exp_sum
+    else:
+        # Fallback: uniform distribution if all zeros (shouldn't happen, but safe)
+        probs = np.ones_like(exp_logits) / len(exp_logits)
     
     return probs
 
@@ -238,21 +248,27 @@ def evaluate_sequential_modalities(
         results: Dictionary with keys as case_ids and values as lists of predictions
                  Each prediction dict should have 'modalities_used', 'prediction', 'label',
                  'confidence', 'probabilities', and optionally 'logits'
-        modalities: Ordered list of modalities supplied via CLI (length 1 or 2)
+        modalities: Ordered list of modalities supplied via CLI (supports N modalities)
     
     Returns:
         Dictionary with certainty metrics for each step (accuracy included for reference only)
     """
     # Organize by modality combinations
-    # Three categories: CT (alone), PET (alone, without context), PET (with CT context)
-    step_data = {
-        modalities[0]: {'predictions': [], 'labels': [], 'full_predictions': []},  # CT alone
-    }
-    if len(modalities) > 1:
-        step_data[modalities[1]] = {'predictions': [], 'labels': [], 'full_predictions': []}  # PET alone (without context)
-        # Add PET with CT context step (labeled as CT+PET for clarity)
-        combined_step_name = '+'.join(modalities)
-        step_data[combined_step_name] = {'predictions': [], 'labels': [], 'full_predictions': []}  # PET with CT context
+    # Dynamic step structure:
+    # - Each modality alone: "Mod1", "Mod2", "Mod3", etc.
+    # - Each modality with context: "Mod2+Mod1", "Mod3+Mod1+Mod2", etc.
+    step_data = {}
+    
+    # Add steps for each modality alone
+    for mod in modalities:
+        step_data[mod] = {'predictions': [], 'labels': [], 'full_predictions': []}
+    
+    # Add steps for each modality with context from previous ones
+    for i in range(1, len(modalities)):
+        current_mod = modalities[i]
+        context_mods = modalities[:i]
+        combined_step_name = '+'.join(context_mods + [current_mod])  # e.g., "Mod1+Mod2" or "Mod1+Mod2+Mod3"
+        step_data[combined_step_name] = {'predictions': [], 'labels': [], 'full_predictions': []}
     
     # Count predictions before categorization
     total_results_count = sum(len(case_results) for case_results in results.values())
@@ -268,7 +284,9 @@ def evaluate_sequential_modalities(
                 continue
             
             # Determine step name (explicit step overrides modality inference)
-            # Three categories: 1) CT (alone), 2) PET (alone, without CT context), 3) PET (with CT context)
+            # Dynamic categorization:
+            # 1) Modality alone (no context) → "Mod1", "Mod2", etc.
+            # 2) Modality with context → "Mod2+Mod1", "Mod3+Mod1+Mod2", etc.
             step_name = result.get('step')
             if step_name is None:
                 used_context = result.get('used_context', False)
@@ -277,24 +295,23 @@ def evaluate_sequential_modalities(
                 if len(mods_used) == 1:
                     mod = mods_used[0]
                     
-                    # Category 1: CT (alone) - modalities[0] always goes to its own step
-                    if mod == modalities[0]:
-                        step_name = mod if mod in step_data else None
-                    
-                    # Category 2 & 3: PET - check if it has CT context
-                    elif mod == modalities[1]:
-                        # Category 3: PET with CT context → CT+PET
-                        if used_context and len(context_from) > 0 and modalities[0] in context_from:
-                            combined_step_name = '+'.join(modalities)
+                    if used_context and len(context_from) > 0:
+                        # Modality with context: build combined step name
+                        # Sort context_from to match the order in modalities list
+                        sorted_context = [m for m in modalities if m in context_from]
+                        if sorted_context:
+                            combined_step_name = '+'.join(sorted_context + [mod])
                             step_name = combined_step_name if combined_step_name in step_data else (mod if mod in step_data else None)
-                        # Category 2: PET alone (without CT context) → PET
                         else:
                             step_name = mod if mod in step_data else None
                     else:
+                        # Modality alone (no context)
                         step_name = mod if mod in step_data else None
-                elif len(mods_used) == len(modalities) and len(modalities) > 1:
-                    # Explicit combined modality case
-                    step_name = '+'.join(modalities)
+                elif len(mods_used) > 1:
+                    # Explicit combined modality case (multiple modalities used together)
+                    step_name = '+'.join(sorted(mods_used, key=lambda m: modalities.index(m) if m in modalities else 999))
+                    if step_name not in step_data:
+                        step_name = None
                 else:
                     step_name = None
             
@@ -2630,10 +2647,14 @@ def calculate_patient_level_results(
     # Organize predictions by patient and modality
     patient_data = {}  # {patient_id: {modality: [predictions], ...}}
     
+    skipped_no_patient_id = 0
+    skipped_no_step_name = 0
+    
     for case_id, case_results in results.items():
         for result in case_results:
             patient_id = result.get('patient_id')
             if patient_id is None:
+                skipped_no_patient_id += 1
                 continue
             
             mods_used = result.get('modalities_used', [])
@@ -2655,10 +2676,16 @@ def calculate_patient_level_results(
                 elif len(mods_used) == len(modalities) and len(modalities) > 1:
                     step_name = '+'.join(modalities)
                 else:
-                    continue  # Skip if can't determine step_name
+                    # Fallback: use first modality if we can't determine
+                    if mods_used:
+                        step_name = mods_used[0]
+                    else:
+                        skipped_no_step_name += 1
+                        continue  # Skip if can't determine step_name
             
             # If step_name is still None, skip this result
             if step_name is None:
+                skipped_no_step_name += 1
                 continue
             
             # Use step_name as-is (already mapped correctly)
@@ -2669,14 +2696,37 @@ def calculate_patient_level_results(
             
             patient_data[patient_id][step_name].append(result)
     
+    # Debug: Log skipped results and patient data summary
+    import sys
+    num_patients_found = len(patient_data)
+    total_results_processed = sum(len(slices) for mod_preds in patient_data.values() for slices in mod_preds.values())
+    
+    if skipped_no_patient_id > 0 or skipped_no_step_name > 0 or num_patients_found < 2:
+        print(f"Warning: Found {num_patients_found} patients in patient_data. Skipped {skipped_no_patient_id} results with no patient_id, {skipped_no_step_name} with no step_name. Total results processed: {total_results_processed}", file=sys.stderr, flush=True)
+        if num_patients_found > 0:
+            patient_ids_found = sorted(patient_data.keys())
+            print(f"  Patient IDs found: {patient_ids_found[:10]}{'...' if len(patient_ids_found) > 10 else ''}", file=sys.stderr, flush=True)
+    
     # Aggregate to patient level and calculate metrics
-    step_data = {
-        modalities[0]: {'predictions': [], 'labels': [], 'full_predictions': []},
-    }
+    # First, collect all unique step_names from patient_data
+    all_step_names = set()
+    for modality_predictions in patient_data.values():
+        all_step_names.update(modality_predictions.keys())
+    
+    # Initialize step_data with all found step_names
+    step_data = {}
+    for step_name in all_step_names:
+        step_data[step_name] = {'predictions': [], 'labels': [], 'full_predictions': []}
+    
+    # Also ensure we have the expected step names (even if empty)
+    if modalities[0] not in step_data:
+        step_data[modalities[0]] = {'predictions': [], 'labels': [], 'full_predictions': []}
     if len(modalities) > 1:
-        step_data[modalities[1]] = {'predictions': [], 'labels': [], 'full_predictions': []}
+        if modalities[1] not in step_data:
+            step_data[modalities[1]] = {'predictions': [], 'labels': [], 'full_predictions': []}
         combined_step_name = '+'.join(modalities)
-        step_data[combined_step_name] = {'predictions': [], 'labels': [], 'full_predictions': []}
+        if combined_step_name not in step_data:
+            step_data[combined_step_name] = {'predictions': [], 'labels': [], 'full_predictions': []}
     
     for patient_id, modality_predictions in patient_data.items():
         for step_name, slices in modality_predictions.items():
@@ -2710,7 +2760,7 @@ def calculate_patient_level_results(
                 patient_pred['used_context'] = first_slice.get('used_context', False)
                 patient_pred['context_from'] = first_slice.get('context_from', [])
             
-            # Use step_name as-is (should match step_data keys)
+            # Add to step_data (step_name should always be in step_data now)
             if step_name in step_data:
                 step_data[step_name]['predictions'].append(aggregated['prediction'])
                 step_data[step_name]['labels'].append(label)
@@ -2854,10 +2904,10 @@ def save_results(results: Dict, output_path: str):
     
     try:
         serializable_results = convert_to_serializable(results)
-    
+        
         with open(output_path, 'w') as f:
             json.dump(serializable_results, f, indent=2)
-    
+        
         print(f"Results saved to {output_path}")
     except Exception as e:
         print(f"ERROR: Failed to save results to {output_path}: {e}", file=sys.stderr)

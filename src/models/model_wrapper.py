@@ -32,7 +32,7 @@ try:
     if hasattr(open_clip, 'create_model_and_transforms'):
         OPENCLIP_AVAILABLE = True
     else:
-        print("⚠️  open_clip found but missing required functions. Try: pip install --upgrade open-clip-torch")
+        print("WARNING: open_clip found but missing required functions. Try: pip install --upgrade open-clip-torch")
 except ImportError:
     pass
 
@@ -118,7 +118,7 @@ class MultimodalModelWrapper:
                 openclip_available = OPENCLIP_AVAILABLE  # Local copy to avoid UnboundLocalError
                 
                 if not openclip_available:
-                    print("⚠️  open_clip not available. Attempting to install...")
+                    print("WARNING: open_clip not available. Attempting to install...")
                     try:
                         import subprocess
                         import sys as sys_module
@@ -129,9 +129,9 @@ class MultimodalModelWrapper:
                             openclip_available = True
                             print("✓ open_clip installed successfully")
                         else:
-                            print("⚠️  open_clip installed but missing required functions")
+                            print("WARNING: open_clip installed but missing required functions")
                     except Exception as e:
-                        print(f"⚠️  Failed to install open_clip: {str(e)[:200]}")
+                        print(f"WARNING: Failed to install open_clip: {str(e)[:200]}")
                         print("   Please install manually: pip install open-clip-torch>=2.20.0")
                 
                 # Attempt 1: Try loading with OpenCLIP (primary method for BiomedCLIP)
@@ -198,7 +198,7 @@ class MultimodalModelWrapper:
                                                 result['input_ids'] = tokenized.to(self.device)
                                             elif isinstance(tokenized, dict):
                                                 result.update({k: v.to(self.device) if isinstance(v, torch_module.Tensor) else v 
-                                                              for k, v in tokenized.items()})
+                                                for k, v in tokenized.items()})
                                             else:
                                                 # Convert to tensor if needed
                                                 if isinstance(tokenized, list):
@@ -331,7 +331,7 @@ class MultimodalModelWrapper:
                             self.model = CLIPModel.from_pretrained(model_name, trust_remote_code=True, **token_kwargs).to(self.device)
                             self.processor = CLIPProcessor.from_pretrained(model_name, trust_remote_code=True, **token_kwargs)
                         loaded = True
-                        print(f"✓ Successfully loaded BiomedCLIP: {model_name}")
+                        print(f"Successfully loaded BiomedCLIP: {model_name}")
                     except Exception as e:
                         last_error = str(e)
                 
@@ -380,7 +380,7 @@ class MultimodalModelWrapper:
                         last_error = str(e)
                 
                 if not loaded:
-                    print(f"⚠️  WARNING: Failed to load BiomedCLIP model: {model_name}")
+                    print(f"WARNING: Failed to load BiomedCLIP model: {model_name}")
                     print(f"   Error: {last_error[:200] if last_error else 'Unknown error'}")
                     print(f"   Falling back to default model: openai/clip-vit-large-patch14")
                     self.model_name = "openai/clip-vit-large-patch14"
@@ -481,7 +481,7 @@ class MultimodalModelWrapper:
         self._original_class_prompts = self.class_prompts.copy()
         self._original_weights = self.weights.copy()
     
-    def _init_enhanced_prompts(self, previous_predictions: Optional[Dict[str, Dict]] = None):
+    def _init_enhanced_prompts(self, previous_predictions: Optional[Dict[str, Dict]] = None, current_modality: Optional[str] = None):
         """
         Initialize diverse prompt strategies for zero-shot classification.
         
@@ -489,12 +489,20 @@ class MultimodalModelWrapper:
             previous_predictions: Optional dict mapping modality names to their predictions.
                 Format: {'CT': {'prediction': 0, 'class_name': 'high_grade'}, ...}
                 If provided, prompts will incorporate this context.
+            current_modality: The modality currently being processed (e.g., 'CT', 'PET', 'PT').
+                Used to make prompts generic instead of hardcoding 'PET scan'.
         """
         first_class, second_class = self.class_names
         
+        # Determine current modality name for prompts (default to generic if not provided)
+        if current_modality is None:
+            current_modality = "scan"  # Generic fallback
+        else:
+            current_modality = f"{current_modality} scan"  # e.g., "PET scan" or "CT scan"
+        
         # Build context string if previous predictions are available
         # Simple concept: "hey CT gave this result, what's for PET?"
-        # Make CT information clear and helpful for PET prediction
+        # Make previous modality information clear and helpful for current modality prediction
         context_parts = []
         if previous_predictions:
             for mod, pred_info in previous_predictions.items():
@@ -506,8 +514,9 @@ class MultimodalModelWrapper:
         if context_parts:
             context_str = ", and ".join(context_parts)
             # Simple and direct: "Given that CT showed X, this PET scan shows..."
-            # This is the core concept: CT gave this result, what's for PET?
-            context_prefix = f"Given that {context_str}, this "
+            # Generic: "Given that {previous_mod} showed X, this {current_mod} shows..."
+            # This is the core concept: previous modality gave this result, what's for current modality?
+            context_prefix = f"Given that {context_str}, this {current_modality} shows "
 
         if self._default_classes:
             # Strategy 1: Direct descriptive prompts (lung-specific)
@@ -573,26 +582,26 @@ class MultimodalModelWrapper:
                     # High-grade prompts (more aggressive, invasive characteristics)
                     # Enhanced with specific medical imaging features for lung cancer
                     if context_prefix:
-                        # PET-specific prompts with CT context - improved medical terminology
+                        # Context-aware prompts with previous modality context - improved medical terminology
                         first_prompts = [
-                            f"{context_prefix}PET scan shows {first_class} non-small cell lung cancer (NSCLC) with aggressive tumor characteristics and high SUVmax values",
-                            f"{context_prefix}PET scan shows {first_class} lung cancer demonstrating large primary tumor size (>3cm), lymph node invasion, and distant metastasis",
-                            f"{context_prefix}PET scan shows {first_class} lung adenocarcinoma or squamous cell carcinoma with poor differentiation, advanced T-stage, and high metabolic activity (SUV >2.5)",
-                            f"{context_prefix}PET scan shows {first_class} lung tumor with intense FDG uptake, irregular spiculated margins, and pleural invasion",
-                            f"{context_prefix}PET scan shows {first_class} lung cancer pathology with invasive growth pattern, mediastinal lymphadenopathy, and high-grade histology",
-                            f"{context_prefix}PET scan shows {first_class} lung cancer with high-grade features: large mass (>5cm), irregular spiculated borders, cavitation, and aggressive appearance on FDG-PET",
-                            f"{context_prefix}PET scan shows {first_class} advanced stage lung cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
-                            f"{context_prefix}PET scan shows {first_class} lung cancer with extensive FDG-avid disease, multiple pulmonary nodules, and extrapulmonary spread",
+                            f"{context_prefix}{current_modality} shows {first_class} non-small cell lung cancer (NSCLC) with aggressive tumor characteristics and high SUVmax values",
+                            f"{context_prefix}{current_modality} shows {first_class} lung cancer demonstrating large primary tumor size (>3cm), lymph node invasion, and distant metastasis",
+                            f"{context_prefix}{current_modality} shows {first_class} lung adenocarcinoma or squamous cell carcinoma with poor differentiation, advanced T-stage, and high metabolic activity (SUV >2.5)",
+                            f"{context_prefix}{current_modality} shows {first_class} lung tumor with intense FDG uptake, irregular spiculated margins, and pleural invasion",
+                            f"{context_prefix}{current_modality} shows {first_class} lung cancer pathology with invasive growth pattern, mediastinal lymphadenopathy, and high-grade histology",
+                            f"{context_prefix}{current_modality} shows {first_class} lung cancer with high-grade features: large mass (>5cm), irregular spiculated borders, cavitation, and aggressive appearance on FDG-PET",
+                            f"{context_prefix}{current_modality} shows {first_class} advanced stage lung cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
+                            f"{context_prefix}{current_modality} shows {first_class} lung cancer with extensive FDG-avid disease, multiple pulmonary nodules, and extrapulmonary spread",
                         ]
                         second_prompts = [
-                            f"{context_prefix}PET scan shows {second_class} non-small cell lung cancer (NSCLC) with less aggressive tumor characteristics and moderate SUVmax values",
-                            f"{context_prefix}PET scan shows {second_class} lung cancer demonstrating smaller primary tumor size (<3cm), localized growth, and no distant metastasis",
-                            f"{context_prefix}PET scan shows {second_class} lung adenocarcinoma or squamous cell carcinoma with well-differentiated histology, early T-stage, and moderate metabolic activity (SUV 1.5-2.5)",
-                            f"{context_prefix}PET scan shows {second_class} lung tumor with mild to moderate FDG uptake, smooth well-defined margins, and no pleural invasion",
-                            f"{context_prefix}PET scan shows {second_class} lung cancer pathology with localized growth pattern, no significant lymphadenopathy, and low-grade histology",
-                            f"{context_prefix}PET scan shows {second_class} lung cancer with low-grade features: smaller mass (<3cm), smooth well-defined borders, no cavitation, and less aggressive appearance on FDG-PET",
-                            f"{context_prefix}PET scan shows {second_class} early-stage lung cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
-                            f"{context_prefix}PET scan shows {second_class} lung cancer with focal FDG-avid disease, single pulmonary nodule, and no extrapulmonary spread",
+                            f"{context_prefix}{current_modality} shows {second_class} non-small cell lung cancer (NSCLC) with less aggressive tumor characteristics and moderate SUVmax values",
+                            f"{context_prefix}{current_modality} shows {second_class} lung cancer demonstrating smaller primary tumor size (<3cm), localized growth, and no distant metastasis",
+                            f"{context_prefix}{current_modality} shows {second_class} lung adenocarcinoma or squamous cell carcinoma with well-differentiated histology, early T-stage, and moderate metabolic activity (SUV 1.5-2.5)",
+                            f"{context_prefix}{current_modality} shows {second_class} lung tumor with mild to moderate FDG uptake, smooth well-defined margins, and no pleural invasion",
+                            f"{context_prefix}{current_modality} shows {second_class} lung cancer pathology with localized growth pattern, no significant lymphadenopathy, and low-grade histology",
+                            f"{context_prefix}{current_modality} shows {second_class} lung cancer with low-grade features: smaller mass (<3cm), smooth well-defined borders, no cavitation, and less aggressive appearance on FDG-PET",
+                            f"{context_prefix}{current_modality} shows {second_class} early-stage lung cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
+                            f"{context_prefix}{current_modality} shows {second_class} lung cancer with focal FDG-avid disease, single pulmonary nodule, and no extrapulmonary spread",
                         ]
                     else:
                         # Original prompts without context - enhanced with medical imaging terminology
@@ -619,26 +628,26 @@ class MultimodalModelWrapper:
                 else:
                     # Low-grade first, high-grade second (swap the descriptions)
                     if context_prefix:
-                        # PET-specific prompts with CT context - improved medical terminology
+                        # Context-aware prompts with previous modality context - improved medical terminology
                         first_prompts = [
-                            f"{context_prefix}PET scan shows {first_class} non-small cell lung cancer (NSCLC) with less aggressive tumor characteristics and moderate SUVmax values",
-                            f"{context_prefix}PET scan shows {first_class} lung cancer demonstrating smaller primary tumor size (<3cm), localized growth, and no distant metastasis",
-                            f"{context_prefix}PET scan shows {first_class} lung adenocarcinoma or squamous cell carcinoma with well-differentiated histology, early T-stage, and moderate metabolic activity (SUV 1.5-2.5)",
-                            f"{context_prefix}PET scan shows {first_class} lung tumor with mild to moderate FDG uptake, smooth well-defined margins, and no pleural invasion",
-                            f"{context_prefix}PET scan shows {first_class} lung cancer pathology with localized growth pattern, no significant lymphadenopathy, and low-grade histology",
-                            f"{context_prefix}PET scan shows {first_class} lung cancer with low-grade features: smaller mass (<3cm), smooth well-defined borders, no cavitation, and less aggressive appearance on FDG-PET",
-                            f"{context_prefix}PET scan shows {first_class} early-stage lung cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
-                            f"{context_prefix}PET scan shows {first_class} lung cancer with focal FDG-avid disease, single pulmonary nodule, and no extrapulmonary spread",
+                            f"{context_prefix}{current_modality} shows {first_class} non-small cell lung cancer (NSCLC) with less aggressive tumor characteristics and moderate SUVmax values",
+                            f"{context_prefix}{current_modality} shows {first_class} lung cancer demonstrating smaller primary tumor size (<3cm), localized growth, and no distant metastasis",
+                            f"{context_prefix}{current_modality} shows {first_class} lung adenocarcinoma or squamous cell carcinoma with well-differentiated histology, early T-stage, and moderate metabolic activity (SUV 1.5-2.5)",
+                            f"{context_prefix}{current_modality} shows {first_class} lung tumor with mild to moderate FDG uptake, smooth well-defined margins, and no pleural invasion",
+                            f"{context_prefix}{current_modality} shows {first_class} lung cancer pathology with localized growth pattern, no significant lymphadenopathy, and low-grade histology",
+                            f"{context_prefix}{current_modality} shows {first_class} lung cancer with low-grade features: smaller mass (<3cm), smooth well-defined borders, no cavitation, and less aggressive appearance on FDG-PET",
+                            f"{context_prefix}{current_modality} shows {first_class} early-stage lung cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
+                            f"{context_prefix}{current_modality} shows {first_class} lung cancer with focal FDG-avid disease, single pulmonary nodule, and no extrapulmonary spread",
                         ]
                         second_prompts = [
-                            f"{context_prefix}PET scan shows {second_class} non-small cell lung cancer (NSCLC) with aggressive tumor characteristics and high SUVmax values",
-                            f"{context_prefix}PET scan shows {second_class} lung cancer demonstrating large primary tumor size (>3cm), lymph node invasion, and distant metastasis",
-                            f"{context_prefix}PET scan shows {second_class} lung adenocarcinoma or squamous cell carcinoma with poor differentiation, advanced T-stage, and high metabolic activity (SUV >2.5)",
-                            f"{context_prefix}PET scan shows {second_class} lung tumor with intense FDG uptake, irregular spiculated margins, and pleural invasion",
-                            f"{context_prefix}PET scan shows {second_class} lung cancer pathology with invasive growth pattern, mediastinal lymphadenopathy, and high-grade histology",
-                            f"{context_prefix}PET scan shows {second_class} lung cancer with high-grade features: large mass (>5cm), irregular spiculated borders, cavitation, and aggressive appearance on FDG-PET",
-                            f"{context_prefix}PET scan shows {second_class} advanced stage lung cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
-                            f"{context_prefix}PET scan shows {second_class} lung cancer with extensive FDG-avid disease, multiple pulmonary nodules, and extrapulmonary spread",
+                            f"{context_prefix}{current_modality} shows {second_class} non-small cell lung cancer (NSCLC) with aggressive tumor characteristics and high SUVmax values",
+                            f"{context_prefix}{current_modality} shows {second_class} lung cancer demonstrating large primary tumor size (>3cm), lymph node invasion, and distant metastasis",
+                            f"{context_prefix}{current_modality} shows {second_class} lung adenocarcinoma or squamous cell carcinoma with poor differentiation, advanced T-stage, and high metabolic activity (SUV >2.5)",
+                            f"{context_prefix}{current_modality} shows {second_class} lung tumor with intense FDG uptake, irregular spiculated margins, and pleural invasion",
+                            f"{context_prefix}{current_modality} shows {second_class} lung cancer pathology with invasive growth pattern, mediastinal lymphadenopathy, and high-grade histology",
+                            f"{context_prefix}{current_modality} shows {second_class} lung cancer with high-grade features: large mass (>5cm), irregular spiculated borders, cavitation, and aggressive appearance on FDG-PET",
+                            f"{context_prefix}{current_modality} shows {second_class} advanced stage lung cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
+                            f"{context_prefix}{current_modality} shows {second_class} lung cancer with extensive FDG-avid disease, multiple pulmonary nodules, and extrapulmonary spread",
                         ]
                     else:
                         # Original prompts without context
@@ -735,7 +744,7 @@ class MultimodalModelWrapper:
             image = Image.blend(image, equalized_rgb, 0.4)
         else:
             # Standard preprocessing (balanced)
-            # Enhance contrast for medical images
+        # Enhance contrast for medical images
             enhancer = ImageEnhance.Contrast(image)
         image = enhancer.enhance(1.3)  # Increase contrast by 30%
         # Enhance sharpness slightly
@@ -786,19 +795,25 @@ class MultimodalModelWrapper:
         Returns:
             Dictionary with prediction (0=Healthy, 1=Tumor), confidence, and probabilities
         """
+        # Determine current modality being processed (for generic prompts)
+        current_modality_name = available_modalities[0] if available_modalities else None
+        
         # Regenerate prompts with context if previous predictions are provided
-        # Store CT prediction for later use in boosting PET predictions
-        ct_prediction_for_boosting = None
-        ct_confidence_for_boosting = None
+        # Store previous modality prediction for later use in boosting current modality predictions
+        previous_mod_prediction_for_boosting = None
+        previous_mod_confidence_for_boosting = None
         if previous_predictions:
-            self._init_enhanced_prompts(previous_predictions=previous_predictions)
-            # Extract CT prediction and confidence for boosting PET accuracy
+            self._init_enhanced_prompts(previous_predictions=previous_predictions, current_modality=current_modality_name)
+            # Extract previous modality prediction and confidence for boosting current modality accuracy
             # previous_predictions format: {'CT': {'prediction': 0, 'class_name': 'high_grade', 'confidence': 0.85}}
             for mod, pred_info in previous_predictions.items():
-                # Get the first modality's prediction (usually CT)
-                ct_prediction_for_boosting = pred_info.get('prediction')
-                ct_confidence_for_boosting = pred_info.get('confidence', 0.5)  # Default to 0.5 if not available
-                break  # Take first modality (CT)
+                # Get the first previous modality's prediction (e.g., CT if current is PET, or PET if current is CT)
+                previous_mod_prediction_for_boosting = pred_info.get('prediction')
+                previous_mod_confidence_for_boosting = pred_info.get('confidence', 0.5)  # Default to 0.5 if not available
+                break  # Take first previous modality
+        else:
+            # No previous predictions, but still need to set current modality for prompts
+            self._init_enhanced_prompts(previous_predictions=None, current_modality=current_modality_name)
         available_images = []
         modality_list = []
         for mod in available_modalities:
@@ -967,73 +982,73 @@ class MultimodalModelWrapper:
         #   2. CT's prediction as context (incorporated in prompts: "Given that CT showed X...")
         #   3. The model has ALREADY considered CT context when making PET's prediction
         #
-        # Therefore, PET's prediction is INFORMED and should be trusted MORE than CT alone!
-        # This is where improvement happens - PET can use both its image AND CT context.
-        # Only apply boosting when we have CT context (i.e., processing PET with CT context)
-        if ct_prediction_for_boosting is not None and previous_predictions:
-            # We're processing PET images with CT context from the SAME patient
-            pet_prediction_before = probs.argmax().item()
-            pet_confidence_before = probs.max().item()
-            ct_class_idx = ct_prediction_for_boosting
-            pet_class_idx = pet_prediction_before
-            ct_confidence = ct_confidence_for_boosting if ct_confidence_for_boosting is not None else 0.5
+        # Therefore, current modality's prediction is INFORMED and should be trusted MORE than previous modality alone!
+        # This is where improvement happens - current modality can use both its image AND previous modality context.
+        # Only apply boosting when we have previous modality context (e.g., processing PET with CT context, or CT with PET context)
+        if previous_mod_prediction_for_boosting is not None and previous_predictions:
+            # We're processing current modality images with previous modality context from the SAME patient
+            current_mod_prediction_before = probs.argmax().item()
+            current_mod_confidence_before = probs.max().item()
+            previous_mod_class_idx = previous_mod_prediction_for_boosting
+            current_mod_class_idx = current_mod_prediction_before
+            previous_mod_confidence = previous_mod_confidence_for_boosting if previous_mod_confidence_for_boosting is not None else 0.5
             
-            if pet_prediction_before == ct_prediction_for_boosting:
-                # Case 1: PET agrees with CT - boost significantly to lock it in
+            if current_mod_prediction_before == previous_mod_prediction_for_boosting:
+                # Case 1: Current modality agrees with previous modality - boost significantly to lock it in
                 # Both modalities agree, so this is very likely correct
-                # The prompts already incorporate CT context, and PET agrees with CT
+                # The prompts already incorporate previous modality context, and current modality agrees with previous
                 # Increased boost factors to ensure agreement cases are strongly favored
-                if pet_confidence_before > 0.7 and ct_confidence > 0.7:
+                if current_mod_confidence_before > 0.7 and previous_mod_confidence > 0.7:
                     # Both highly confident - very strong boost
                     boost_factor = 80.0  # Increased from 50.0
-                elif pet_confidence_before > 0.6 or ct_confidence > 0.6:
+                elif current_mod_confidence_before > 0.6 or previous_mod_confidence > 0.6:
                     # At least one confident - strong boost
                     boost_factor = 50.0  # Increased from 30.0
                 else:
                     # Lower confidence - moderate boost
                     boost_factor = 35.0  # Increased from 20.0
-                probs[pet_prediction_before] = probs[pet_prediction_before] * boost_factor
+                probs[current_mod_prediction_before] = probs[current_mod_prediction_before] * boost_factor
             else:
-                # Case 2: PET disagrees with CT - PROFESSOR'S REQUIREMENT
-                # The prompts already include CT context: "Given that CT showed X, this PET scan shows..."
-                # So the model has ALREADY considered CT's information when making PET's prediction
+                # Case 2: Current modality disagrees with previous modality - PROFESSOR'S REQUIREMENT
+                # The prompts already include previous modality context: "Given that {previous_mod} showed X, this {current_mod} shows..."
+                # So the model has ALREADY considered previous modality's information when making current modality's prediction
                 # 
-                # KEY INSIGHT: PET has MORE information than CT:
-                #   - PET's own visual signal
-                #   - CT's prediction as context (in prompts)
-                # Therefore, PET's informed judgment should be trusted MORE
+                # KEY INSIGHT: Current modality has MORE information than previous modality:
+                #   - Current modality's own visual signal
+                #   - Previous modality's prediction as context (in prompts)
+                # Therefore, current modality's informed judgment should be trusted MORE
                 # 
-                # Strategy: Trust PET's informed judgment MORE to enable improvement
-                # When PET disagrees after seeing CT context, PET might be seeing something CT missed
-                # This is where improvement happens - PET can correct CT's mistakes
+                # Strategy: Trust current modality's informed judgment MORE to enable improvement
+                # When current modality disagrees after seeing previous modality context, current modality might be seeing something previous modality missed
+                # This is where improvement happens - current modality can correct previous modality's mistakes
                 # 
-                # IMPROVEMENT: Don't boost CT when PET disagrees - trust PET's informed decision
-                # PET has already seen CT context in prompts, so if PET still disagrees, trust PET
+                # IMPROVEMENT: Don't boost previous modality when current modality disagrees - trust current modality's informed decision
+                # Current modality has already seen previous modality context in prompts, so if current modality still disagrees, trust current modality
                 
-                # CRITICAL FIX: When PET disagrees with CT, ONLY boost PET, NOT CT
-                # PET has more information (PET image + CT context in prompts)
-                # If PET still disagrees after seeing CT context, trust PET's informed decision
-                # Boosting CT would work against improvement!
+                # CRITICAL FIX: When current modality disagrees with previous modality, ONLY boost current modality, NOT previous modality
+                # Current modality has more information (current modality image + previous modality context in prompts)
+                # If current modality still disagrees after seeing previous modality context, trust current modality's informed decision
+                # Boosting previous modality would work against improvement!
                 
-                if pet_confidence_before > 0.65:
-                    # PET is confident - trust PET STRONGLY (PET has more information!)
-                    # This allows PET to correct CT and improve accuracy
-                    pet_boost_factor = 10.0  # Increased from 8.0 - even stronger trust
-                    # DO NOT boost CT - let PET's informed decision win
-                elif pet_confidence_before > 0.55:
-                    # PET is moderately confident - favor PET strongly
-                    pet_boost_factor = 7.0   # Increased from 5.0
-                    # DO NOT boost CT
+                if current_mod_confidence_before > 0.65:
+                    # Current modality is confident - trust current modality STRONGLY (current modality has more information!)
+                    # This allows current modality to correct previous modality and improve accuracy
+                    current_mod_boost_factor = 10.0  # Increased from 8.0 - even stronger trust
+                    # DO NOT boost previous modality - let current modality's informed decision win
+                elif current_mod_confidence_before > 0.55:
+                    # Current modality is moderately confident - favor current modality strongly
+                    current_mod_boost_factor = 7.0   # Increased from 5.0
+                    # DO NOT boost previous modality
                 else:
-                    # PET is not confident - still favor PET (it has more information)
-                    pet_boost_factor = 5.0   # Increased from 3.5
-                    # DO NOT boost CT - trust PET's informed judgment
+                    # Current modality is not confident - still favor current modality (it has more information)
+                    current_mod_boost_factor = 5.0   # Increased from 3.5
+                    # DO NOT boost previous modality - trust current modality's informed judgment
                 
-                    # Apply boost ONLY to PET (not CT) - pet_class_idx is defined above in this block
-                    # Safety check: only apply if pet_class_idx is defined (should always be in this block)
-                    if 'pet_class_idx' in locals():
-                        probs[pet_class_idx] = probs[pet_class_idx] * pet_boost_factor
-                    # Do NOT boost CT when PET disagrees - this is key to improvement!
+                # Apply boost ONLY to current modality (not previous modality) - current_mod_class_idx is defined above in this block
+                # Safety check: only apply if current_mod_class_idx is defined (should always be in this block)
+                if 'current_mod_class_idx' in locals():
+                    probs[current_mod_class_idx] = probs[current_mod_class_idx] * current_mod_boost_factor
+                # Do NOT boost previous modality when current modality disagrees - this is key to improvement!
         
         # Renormalize probabilities after boosting
         probs = probs / probs.sum()

@@ -149,7 +149,7 @@ class LLaVAMedRunner:
             images=image_tensor,
             attention_mask=attention_mask,
             do_sample=False,
-            max_new_tokens=10,  # Increased from 3 to allow proper response (was too restrictive)
+                max_new_tokens=10,  # Increased from 3 to allow proper response (was too restrictive)
             use_cache=True,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,

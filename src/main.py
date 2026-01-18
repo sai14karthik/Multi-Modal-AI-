@@ -1,34 +1,68 @@
 """
 Sequential modality evaluation script.
 Evaluates model performance with sequential modality evaluation:
-1. CT evaluation (baseline)
-2. PET evaluation (with CT context from Step 1)
-Supports CT, PET, and other medical imaging modalities.
+    1. First modality evaluation (baseline) - e.g., CT or PET
+    2. Second modality evaluation without context
+    3. Second modality evaluation with first modality context from Step 1
+    Supports any medical imaging modalities (CT, PET, MRI, etc.) in any order.
 """
 
-# Set up stderr filtering FIRST, before any imports that might trigger warnings
+# Set up stderr and stdout filtering FIRST, before any imports that might trigger warnings
 import sys
 import os
 import warnings
 
-# Suppress stderr for cadam32bit warning - must be before any imports
+# Suppress stderr and stdout for cadam32bit warning - must be before any imports
 _original_stderr = sys.stderr
+_original_stdout = sys.stdout
+
+def should_filter_message(s):
+    """Check if a message should be filtered (cadam32bit warning)."""
+    if not s:
+        return False
+    s_lower = s.lower()
+    return (
+        'cadam32bit' in s_lower or
+        'text_config_dict' in s or
+        'cliptextconfig' in s_lower or
+        ('overriden' in s_lower and 'text_config' in s_lower) or
+        ('nonetype' in s_lower and 'cadam32bit' in s_lower) or
+        ("'nonetype' object has no attribute 'cadam32bit" in s_lower) or
+        ("nonetype' object has no attribute 'cadam32bit" in s_lower) or
+        ("object has no attribute 'cadam32bit" in s_lower) or
+        ("'nonetype' object has no attribute 'cadam32bit_grad_fp32" in s_lower) or
+        ("nonetype' object has no attribute 'cadam32bit_grad_fp32" in s_lower) or
+        ("object has no attribute 'cadam32bit_grad_fp32" in s_lower) or
+        ("has no attribute 'cadam32bit" in s_lower) or
+        ("nonetype' object has no attribute" in s_lower and 'cadam32bit' in s_lower) or
+        (s.strip().startswith("'") and "nonetype" in s_lower and "cadam32bit" in s_lower) or
+        ("'nonetype'" in s_lower and "cadam32bit" in s_lower) or
+        ("nonetype'" in s_lower and "cadam32bit" in s_lower) or
+        (s.strip() == "'NoneType' object has no attribute 'cadam32bit_grad_fp32'\n") or
+        (s.strip() == "'NoneType' object has no attribute 'cadam32bit_grad_fp32'")
+    )
+
 class FilteredStderr:
     def __init__(self):
         self._original = _original_stderr
+        self._buffer = ""  # Buffer for multi-line warnings
     
     def write(self, s):
         if s:
-            # Check if this is the specific warning we want to filter
-            s_lower = s.lower()
-            should_filter = (
-                'cadam32bit' in s_lower or
-                'text_config_dict' in s or
-                'cliptextconfig' in s_lower or
-                ('overriden' in s_lower and 'text_config' in s_lower) or
-                ('nonetype' in s_lower and 'cadam32bit' in s_lower)
-            )
-            if not should_filter:
+            # Buffer the string to handle multi-line warnings
+            self._buffer += s
+            
+            # Check if buffer contains the warning
+            combined = self._buffer.lower()
+            if should_filter_message(s) or should_filter_message(combined):
+                self._buffer = ""
+                return
+            
+            # Clear buffer if we see a newline and it's not a warning
+            if '\n' in s:
+                self._buffer = ""
+            
+            # Write if not filtered
                 self._original.write(s)
     
     def flush(self):
@@ -38,7 +72,38 @@ class FilteredStderr:
         # Forward any other attributes to original stderr
         return getattr(self._original, name)
 
+class FilteredStdout:
+    def __init__(self):
+        self._original = _original_stdout
+        self._buffer = ""  # Buffer for multi-line warnings
+    
+    def write(self, s):
+        if s:
+            # Buffer the string to handle multi-line warnings
+            self._buffer += s
+            
+            # Check if buffer contains the warning
+            combined = self._buffer.lower()
+            if should_filter_message(s) or should_filter_message(combined):
+                self._buffer = ""
+                return
+            
+            # Clear buffer if we see a newline and it's not a warning
+            if '\n' in s:
+                self._buffer = ""
+            
+            # Write if not filtered
+            self._original.write(s)
+    
+    def flush(self):
+        self._original.flush()
+    
+    def __getattr__(self, name):
+        # Forward any other attributes to original stdout
+        return getattr(self._original, name)
+
 sys.stderr = FilteredStderr()
+sys.stdout = FilteredStdout()
 
 # Set environment variables early to prevent warnings
 os.environ.setdefault('BITSANDBYTES_NOWELCOME', '1')
@@ -52,13 +117,11 @@ try:
     env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
     if os.path.exists(env_path):
         load_dotenv(env_path)
-        if os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN'):
-            print("Loaded Hugging Face token from .env file")
 except ImportError:
     # python-dotenv not installed, skip .env loading
     pass
 except Exception as e:
-                # Silently fail if .env loading has issues
+    # Silently fail if .env loading has issues
     pass
 
 import argparse
@@ -86,6 +149,17 @@ warnings.filterwarnings('ignore', message='.*id2label.*')
 warnings.filterwarnings('ignore', message='.*bos_token_id.*')
 warnings.filterwarnings('ignore', message='.*eos_token_id.*')
 
+# Override warnings.showwarning to filter cadam32bit warnings
+_original_showwarning = warnings.showwarning
+def filtered_showwarning(message, category, filename, lineno, file=None, line=None):
+    """Filter out cadam32bit warnings before they're printed."""
+    msg_str = str(message).lower()
+    if 'cadam32bit' in msg_str or ('nonetype' in msg_str and 'cadam32bit' in msg_str):
+        return  # Suppress this warning
+    # Call original showwarning for all other warnings
+    _original_showwarning(message, category, filename, lineno, file, line)
+warnings.showwarning = filtered_showwarning
+
 from PIL import Image
 import torch
 import numpy as np
@@ -96,13 +170,18 @@ from tqdm import tqdm
 is_slurm = os.environ.get('SLURM_JOB_ID') is not None
 # Check if running in interactive terminal
 is_interactive = sys.stdout.isatty() if hasattr(sys.stdout, 'isatty') else False
+
+# Configure tqdm with proper progress bar display
+# Use stderr for progress bars to avoid interfering with stdout (results, etc.)
 tqdm_kwargs = {
-    'file': sys.stderr if is_slurm else sys.stdout,  # stderr more reliable for Slurm
-    'ncols': 100 if is_interactive else 120,  # Adjust width based on terminal
-    'mininterval': 0.5,  # Update at least every 0.5 seconds
-    'miniters': 1,  # Update on every iteration (for file output)
-    'disable': False,  # Always show progress bars
-    'dynamic_ncols': True  # Allow tqdm to adjust width automatically
+    'file': sys.stderr,  # Always use stderr for progress bars (works better with redirected output)
+    'ncols': 100,  # Reasonable width for progress bar
+    'mininterval': 0.5,  # Update every 0.5 seconds for smooth but not too frequent updates
+    'miniters': 1,  # Update every iteration
+    'disable': False,  # Enable by default
+    'dynamic_ncols': False,  # Fixed width for consistency
+    'leave': False,  # Don't leave progress bar after completion
+    'bar_format': '{desc}: {percentage:3.0f}%|{bar:40}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'  # Full progress bar with percentage, bar, count, time, and rate
 }
 
 from src.data.config import load_dataset_config
@@ -116,6 +195,48 @@ from src.utils.evaluation import (
     analyze_modality_agreement,
     analyze_patient_level_agreement
 )
+
+def extract_patient_id_from_img(img_info):
+    """
+    Extract patient_id from img_info with consistent fallback logic.
+    This ensures the same patient_id is used for the same image across all steps.
+    IMPORTANT: This function should return the SAME patient_id for the same image
+    that was used during initial patient matching.
+    """
+    # First try: Use patient_id from img_info (set by dataloader)
+    patient_id = img_info.get('patient_id')
+    if patient_id is not None and str(patient_id).strip():
+        return str(patient_id).strip()
+    
+    # Fallback 1: Try other metadata fields
+    if patient_id is None:
+        patient_id = img_info.get('image_id') or img_info.get('series_uid')
+        if patient_id is not None and str(patient_id).strip():
+            return str(patient_id).strip()
+    
+    # Fallback 2: Extract from filename/path (same pattern as dataloader)
+    if patient_id is None:
+        image_path = img_info.get('image_path', '')
+        if image_path:
+            filename = os.path.basename(image_path)
+            # Try common patterns: A0001, patient_001, etc. (same as dataloader)
+            try:
+                import re
+                patient_match = re.search(r'([A-Z]?\d{4,})', filename)
+                if patient_match:
+                    return patient_match.group(1)
+            except Exception:
+                pass
+    
+    # Fallback 3: Use hash of image path (ONLY if no other option)
+    # This ensures consistency but should rarely be needed if dataloader works correctly
+    if patient_id is None:
+        image_path = img_info.get('image_path', '')
+        if image_path:
+            import hashlib
+            patient_id = hashlib.md5(image_path.encode()).hexdigest()[:8]
+    
+    return patient_id
 
 def main():
     parser = argparse.ArgumentParser(
@@ -198,6 +319,11 @@ def main():
         help='Disable testing both swap strategies (use original swap only)'
     )
     parser.add_argument(
+        '--no_progress',
+        action='store_true',
+        help='Disable progress bars for cleaner output'
+    )
+    parser.add_argument(
         '--dataset_config',
         type=str,
         default=None,
@@ -227,20 +353,29 @@ def main():
         action='store_true',
         help='Permit running with a single modality (steps 2 and 3 will be skipped)'
     )
+    parser.add_argument(
+        '--reverse_order',
+        action='store_true',
+        help='Process modalities in reversed order (e.g., Mod4→Mod3→Mod2→Mod1 instead of Mod1→Mod2→Mod3→Mod4)'
+    )
     
     args = parser.parse_args()
     
     if len(args.modalities) == 0:
         parser.error("Please provide at least one modality (e.g., CT).")
     
-    # Use only the first two modalities for sequential evaluation
-    args.modalities = args.modalities[:2]
+    # Support N modalities for cascading context evaluation
+    # No longer limited to 2 modalities
+    if len(args.modalities) < 1 and not args.allow_single_modality:
+        parser.error("Please provide at least one modality (e.g., CT).")
     
-    if len(args.modalities) < 2 and not args.allow_single_modality:
-        parser.error("Please provide at least two distinct modalities (e.g., CT MRI).")
-    
-    if len(args.modalities) == 2 and len(set(args.modalities)) != 2:
+    if len(set(args.modalities)) != len(args.modalities):
         parser.error("Modalities for sequential evaluation must be distinct.")
+    
+    # Support reversed order if requested
+    if args.reverse_order:
+        args.modalities = list(reversed(args.modalities))
+        print(f"Reversed modality order: {args.modalities}")
     
     if not os.path.isdir(args.data_root):
         parser.error(f"Data root directory not found: {args.data_root}")
@@ -267,23 +402,17 @@ def main():
     
     # Set device
     device = args.device or ('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
     
     # Handle Hugging Face token
     hf_token = args.hf_token or os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN')
+    
     if hf_token:
         # Set environment variable for huggingface_hub to pick up
         os.environ['HF_TOKEN'] = hf_token
         os.environ['HUGGING_FACE_HUB_TOKEN'] = hf_token
-        print("Hugging Face token configured for private model access")
-    else:
-        # Check if token is needed (user might have it in ~/.huggingface/token)
-        print("No Hugging Face token provided. Using public models or cached credentials.")
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
-    
-    print(f"\nLoading data from {args.data_root}...")
     
     # Load model
     if args.model_arch == 'llava':
@@ -310,357 +439,375 @@ def main():
             hf_token=hf_token
         )
     
-    print("\nOrganizing images by modality...")
-    
-    first_modality = args.modalities[0]
-    second_modality = args.modalities[1] if len(args.modalities) > 1 else None
-    
-    print(f"  Loading {first_modality} images...")
-    first_mod_images = get_all_images_by_modality(
-        args.data_root,
-        first_modality,
-        classes=args.class_names,
-        dataset_config_path=args.dataset_config,
-        split=args.split
-    )
-    second_mod_images = []
-    if second_modality:
-        print(f"  Loading {second_modality} images...")
-        second_mod_images = get_all_images_by_modality(
+    # Disable progress bars if --no_progress flag is set
+    if hasattr(args, 'no_progress') and args.no_progress:
+        tqdm_kwargs['disable'] = True
+
+    # Load images for all modalities
+    modalities = args.modalities
+    modality_images = {}
+
+    for mod in modalities:
+        mod_images = get_all_images_by_modality(
             args.data_root,
-            second_modality,
+            mod,
             classes=args.class_names,
             dataset_config_path=args.dataset_config,
             split=args.split
         )
-    
-    if not first_mod_images:
-        parser.error(f"No images found for modality '{first_modality}'. Check folder structure and casing.")
-    if second_modality and not second_mod_images:
-        parser.error(f"No images found for modality '{second_modality}'. Check folder structure and casing.")
-    
-    print(f"  - Total {first_modality} images: {len(first_mod_images)}")
-    if second_modality:
-        print(f"  - Total {second_modality} images: {len(second_mod_images)}")
-    
-    # Helper function to extract patient_id consistently
-    # Use the patient_id that's already in the image metadata (from dataloader)
-    def extract_patient_id_from_img(img):
-        """Extract patient_id from image metadata.
-        The dataloader already extracts patient_id correctly, so we use it directly."""
-        # Use patient_id from metadata (dataloader already extracted it)
-        patient_id = img.get('patient_id')
-        if patient_id is not None and str(patient_id).strip():
-            return str(patient_id).strip()
-        
-        # Fallback: extract from filename if not in metadata
-        image_path = img.get('image_path', '')
-        if image_path:
-            filename = os.path.basename(image_path)
-            # Try pattern from dataloader: A0001, 0001, etc. (flexible)
-            match = re.search(r'([A-Z]?\d{4,})', filename)
-            if match:
-                return match.group(1)
-        
-        # If no patient_id found, return None
-        return None
-    
+        if not mod_images:
+            parser.error(f"No images found for modality '{mod}'. Check folder structure and casing.")
+        modality_images[mod] = mod_images
+
+    # Use the global extract_patient_id_from_img function for consistency
+    # This ensures the same patient_id extraction logic is used throughout
+
     def has_valid_patient_id(img):
-        """Check if image has a valid patient_id (not None)."""
+        """Check if image has a valid patient_id (not None, not a hash)."""
+        # Use the global extract_patient_id_from_img function
         patient_id = extract_patient_id_from_img(img)
-        return patient_id is not None
-    
-    # Ensure all patients with both CT and PET are included
-    # When max_samples=100: Distribute 100 CT and 100 PET across ALL patients that have both
-    # Each patient gets both CT and PET scans
+        # Consider it valid if it's not None and not a hash (hashes are 8 hex chars)
+        if patient_id is None:
+            return False
+        # If it's a hash (8 hex characters), it's not a real patient_id
+        if len(patient_id) == 8 and all(c in '0123456789abcdef' for c in patient_id.lower()):
+            return False
+        return True
+
+    # Ensure all patients with ALL specified modalities are included
+    # When max_samples=100: Distribute 100 images per modality across ALL patients that have all modalities
+    # Each patient gets all modality scans
     # When max_samples=None: Process ALL images from ALL patients (still with patient matching)
-    if second_modality:
-        # Filter: Only keep images with valid patient_id
-        first_mod_images_with_pid = [img for img in first_mod_images if has_valid_patient_id(img)]
-        second_mod_images_with_pid = [img for img in second_mod_images if has_valid_patient_id(img)]
-        
-        # Only check if max_samples is specified
-        if args.max_samples is not None:
-            # This is a rough check - we'll do proper validation after grouping by patient
-            if len(first_mod_images_with_pid) < args.max_samples:
-                print(f"  Warning: Only {len(first_mod_images_with_pid)} {first_modality} images with valid patient_id available.")
-            if len(second_mod_images_with_pid) < args.max_samples:
-                print(f"  Warning: Only {len(second_mod_images_with_pid)} {second_modality} images with valid patient_id available.")
-        
-        # Group images by patient_id for both modalities (only valid patient_ids)
-        first_mod_by_patient = {}
-        for img in first_mod_images_with_pid:
-            patient_id = extract_patient_id_from_img(img)
-            if patient_id is not None:
-                if patient_id not in first_mod_by_patient:
-                    first_mod_by_patient[patient_id] = []
-                first_mod_by_patient[patient_id].append(img)
-        
-        second_mod_by_patient = {}
-        for img in second_mod_images_with_pid:
-            patient_id = extract_patient_id_from_img(img)
-            if patient_id is not None:
-                if patient_id not in second_mod_by_patient:
-                    second_mod_by_patient[patient_id] = []
-                second_mod_by_patient[patient_id].append(img)
-        
-        # Find ALL patients that have BOTH CT and PET images
-        # When max_samples=100: Try to get 100 different patients, each with 1 CT and 1 PET
-        # Result: Patient 1 (CT + PET), Patient 2 (CT + PET), ..., Patient N (CT + PET)
+    if len(modalities) > 1:
+        # Filter: Only keep images with valid patient_id for all modalities
+        modality_images_with_pid = {}
+        for mod in modalities:
+            modality_images_with_pid[mod] = [img for img in modality_images[mod] if has_valid_patient_id(img)]
+            if args.max_samples is not None and len(modality_images_with_pid[mod]) < args.max_samples:
+                print(f"  Warning: Only {len(modality_images_with_pid[mod])} {mod} images with valid patient_id available.")
+
+        # Group images by patient_id for all modalities (only valid patient_ids)
+        modality_by_patient = {}
+        for mod in modalities:
+            modality_by_patient[mod] = {}
+            for img in modality_images_with_pid[mod]:
+                patient_id = extract_patient_id_from_img(img)
+                if patient_id is not None:
+                    if patient_id not in modality_by_patient[mod]:
+                        modality_by_patient[mod][patient_id] = []
+                    modality_by_patient[mod][patient_id].append(img)
+
+        # Find ALL patients that have ALL specified modalities
+        # When max_samples=100: Try to get 100 different patients, each with all modalities
+        # Result: Patient 1 (all mods), Patient 2 (all mods), ..., Patient N (all mods)
         # If fewer patients available, use all available patients
         matched_patients = []
-        for patient_id in first_mod_by_patient:
-            if patient_id in second_mod_by_patient:
-                # Patient must have at least 1 CT and 1 PET
-                if len(first_mod_by_patient[patient_id]) >= 1 and len(second_mod_by_patient[patient_id]) >= 1:
-                    matched_patients.append(patient_id)
-        
+        # Start with patients from first modality
+        for patient_id in modality_by_patient[modalities[0]]:
+            # Check if this patient has all other modalities
+            has_all_mods = True
+            for mod in modalities[1:]:
+                if patient_id not in modality_by_patient[mod] or len(modality_by_patient[mod][patient_id]) == 0:
+                    has_all_mods = False
+                    break
+            if has_all_mods:
+                # Patient must have at least 1 image for each modality
+                for mod in modalities:
+                    if len(modality_by_patient[mod][patient_id]) < 1:
+                        has_all_mods = False
+                        break
+            if has_all_mods:
+                matched_patients.append(patient_id)
+
         if len(matched_patients) == 0:
-            parser.error(f"No patients found with both {first_modality} and {second_modality} images. Check patient_id matching.")
-        
+            mod_list = " and ".join(modalities)
+            parser.error(f"No patients found with all modalities ({mod_list}). Check patient_id matching.")
+
         # Shuffle for reproducibility
         random.seed(42)
         random.shuffle(matched_patients)
-        
-        # Select all available patients (52 patients with both CT and PET)
-        # max_samples controls how many images per patient, not how many patients
+
+        # Select all available patients
+        # max_samples controls how many images per patient per modality, not how many patients
         selected_patients = matched_patients
-        print(f"\nFound {len(matched_patients)} patients with both {first_modality} and {second_modality} images", flush=True)
+        mod_list = ", ".join(modalities)
+        print(f"\nFound {len(matched_patients)} patients with all modalities ({mod_list})", flush=True)
         if args.max_samples is not None:
-            print(f"  Will take up to {args.max_samples} {first_modality} and {args.max_samples} {second_modality} images from each patient", flush=True)
-            print(f"  Expected total: ~{len(matched_patients) * args.max_samples} {first_modality} and ~{len(matched_patients) * args.max_samples} {second_modality} images", flush=True)
-    
+            print(f"  Will take up to {args.max_samples} images per modality from each patient", flush=True)
+            print(f"  Expected total: ~{len(matched_patients) * args.max_samples} images per modality", flush=True)
+
         # For each selected patient, take images based on max_samples
         # If max_samples is None: take ALL images from each patient
-        # If max_samples is specified: take up to max_samples CT and max_samples PET per patient
-        selected_first_mod = []
-        selected_second_mod = []
-        
+        # If max_samples is specified: take up to max_samples images per modality per patient
+        selected_modality_images = {mod: [] for mod in modalities}
+
         # Shuffle patient images for variety (seed once before loop for reproducibility)
         for patient_id in selected_patients:
-            patient_ct_images = first_mod_by_patient[patient_id].copy()
-            patient_pet_images = second_mod_by_patient[patient_id].copy()
-    
-            # Shuffle patient's images for variety
-            random.shuffle(patient_ct_images)
-            random.shuffle(patient_pet_images)
-            
-            if args.max_samples is None:
-                # Take ALL CT and ALL PET images from this patient
-                selected_first_mod.extend(patient_ct_images)
-                selected_second_mod.extend(patient_pet_images)
-            else:
-                # Take up to max_samples CT and max_samples PET images from this patient
-                # If patient has fewer images, take all available
-                ct_to_take = min(args.max_samples, len(patient_ct_images))
-                pet_to_take = min(args.max_samples, len(patient_pet_images))
-                
-                selected_first_mod.extend(patient_ct_images[:ct_to_take])
-                selected_second_mod.extend(patient_pet_images[:pet_to_take])
-        
+            for mod in modalities:
+                patient_mod_images = modality_by_patient[mod][patient_id].copy()
+                random.shuffle(patient_mod_images)
+
+                if args.max_samples is None:
+                    # Take ALL images from this patient for this modality
+                    selected_modality_images[mod].extend(patient_mod_images)
+                else:
+                    # Take up to max_samples images from this patient for this modality
+                    mod_to_take = min(args.max_samples, len(patient_mod_images))
+                    selected_modality_images[mod].extend(patient_mod_images[:mod_to_take])
+
         # Update image lists
-        first_mod_images = selected_first_mod
-        second_mod_images = selected_second_mod
+        for mod in modalities:
+            modality_images[mod] = selected_modality_images[mod]
     else:
-        # Original behavior: shuffle and limit independently (single modality case)
+        # Single modality case: shuffle and limit independently
         random.seed(42)
-        random.shuffle(first_mod_images)
-        if second_modality:
-            random.shuffle(second_mod_images)
-    
-        # Only apply max_samples limit for single-modality case
-        # (For multi-modality, max_samples is already applied per patient above)
-        if args.max_samples is not None and args.max_samples > 0:
-            first_mod_images = first_mod_images[:args.max_samples]
-            if second_modality:
-                second_mod_images = second_mod_images[:args.max_samples]
-    
-    if second_modality:
-        print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
-        print(f"       2. {second_modality} ({len(second_mod_images)} instances) without {first_modality} context")
-        print(f"       3. {second_modality} ({len(second_mod_images)} instances) with {first_modality} context")
-    else:
-        print(f"Steps: 1. {first_modality} ({len(first_mod_images)} instances)")
+        for mod in modalities:
+            random.shuffle(modality_images[mod])
+            if args.max_samples is not None and args.max_samples > 0:
+                modality_images[mod] = modality_images[mod][:args.max_samples]
+
+    # Print step plan
     
     results = {}
-    # Format: {patient_id: {'prediction': int, 'class_name': str}}
-    # Each patient gets ONE aggregated CT prediction from all their slices
-    # All PET images from same patient will use this aggregated CT prediction
+    # Format: {patient_id: {modality: {'prediction': int, 'class_name': str, 'confidence': float}}}
+    # Each patient gets aggregated predictions for each modality from all their slices
     patient_predictions = {}
+
+    # Store predictions by image for better matching and aggregation
+    # Format: {modality: {patient_id: [{'image_id': str, 'prediction': int, 'class_name': str, 'confidence': float}, ...]}}
+    patient_modality_predictions_list = {mod: {} for mod in modalities}
+
+    # STEP 1-N: Process each modality alone (no context)
+    step_num = 1
+    for mod_idx, current_mod in enumerate(modalities):
+        mod_images = modality_images[current_mod]
     
-    # Store CT predictions by image for better matching and aggregation
-    # Format: {patient_id: [{'image_id': str, 'prediction': int, 'class_name': str, 'confidence': float}, ...]}
-    patient_ct_predictions_list = {}
-    
-    print(f"\n{'='*60}")
-    print(f"Step 1: {first_modality} ({len(first_mod_images)} instances)")
-    print(f"{'='*60}")
-    
-    total_images = len(first_mod_images)
-    
-    for img_info in tqdm(first_mod_images, desc=f"Processing {first_modality}", total=total_images, **tqdm_kwargs):
-        # Make case_id unique by including image_path (image_id may not be unique)
-        # Use basename of image_path to keep it readable but unique
-        image_basename = os.path.basename(img_info.get('image_path', ''))
-        case_id = f"{img_info['class'].lower()}_{image_basename}_{first_modality}"
-        label = img_info['label']
-        patient_id = extract_patient_id_from_img(img_info)
+        total_images = len(mod_images)
+
+        for img_info in tqdm(mod_images, desc=f"Processing {current_mod}", total=total_images, **tqdm_kwargs):
+            # Make case_id unique by including image_path (image_id may not be unique)
+            # Use basename of image_path to keep it readable but unique
+            image_basename = os.path.basename(img_info.get('image_path', ''))
+            case_id = f"{img_info['class'].lower()}_{image_basename}_{current_mod}"
+            label = img_info['label']
+            patient_id = extract_patient_id_from_img(img_info)
         
-        if case_id not in results:
-            results[case_id] = []
+            if case_id not in results:
+                results[case_id] = []
         
-        try:
-            img = Image.open(img_info['image_path']).convert('RGB')
+            try:
+                img = Image.open(img_info['image_path']).convert('RGB')
             
-            prediction = model.predict(
-                images={first_modality: img},
-                available_modalities=[first_modality],
+                prediction = model.predict(
+                images={current_mod: img},
+                available_modalities=[current_mod],
                 batch_size=args.batch_size,
                 preprocess=not args.no_preprocess,
                 temperature=args.temperature,
                 use_weighted_ensemble=not args.no_weighted_ensemble,
                 try_both_swaps=not args.no_swap_test,
-                aggressive_preprocess=args.aggressive_preprocess
-            )
-            
-            # Store CT prediction result (y_i) for this patient i
-            # This CT output will be given to PET scan from the SAME patient i in Step 2
-            pred_class_name = args.class_names[prediction['prediction']]  # CT output: e.g., "high_grade" or "low_grade"
-            
-            # Store CT prediction for patient i
-            # When processing PET scan from patient i, it will get this CT result (y_i)
-            # STRATEGY: If patient has multiple CT scans, keep the one with HIGHEST confidence
-            # This ensures PET gets the most reliable CT prediction
-            if patient_id is None:
-                # Try to extract patient_id again with more verbose extraction
-                # This should not happen if images came from selected_first_mod, but handle gracefully
-                print(f"Warning: patient_id is None for image {img_info.get('image_path', 'unknown')}. "
-                      f"Metadata keys: {list(img_info.keys())}", file=sys.stderr, flush=True)
-                # Try fallback extraction
-                patient_id = extract_patient_id_from_img(img_info)
+                aggressive_preprocess=args.aggressive_preprocess,
+                previous_predictions=None  # No context for standalone processing
+                )
+
+                pred_class_name = args.class_names[prediction['prediction']]
+
+                # Handle patient_id extraction with robust fallbacks
+                # CRITICAL: Don't skip images - use fallback identifiers if needed
                 if patient_id is None:
-                    # Last resort: use image_id or case_id as patient identifier
-                    patient_id = img_info.get('image_id') or case_id
-                    if patient_id:
-                        print(f"  Using fallback patient_id: {patient_id}", file=sys.stderr, flush=True)
-                    else:
-                        # Skip if still no patient_id
-                        continue
+                    # Try multiple fallback strategies
+                    patient_id = (
+                    img_info.get('patient_id') or  # Try metadata again
+                    img_info.get('image_id') or    # Use image_id
+                    img_info.get('series_uid') or  # Use series_uid
+                    case_id                        # Use case_id as last resort
+                    )
+
+                # If still None, generate a unique identifier from image path
+                if patient_id is None:
+                    image_path = img_info.get('image_path', '')
+                    if image_path:
+                        # Extract any identifier from path (filename, folder, etc.)
+                        path_parts = image_path.replace('\\', '/').split('/')
+                        # Try to find any numeric or alphanumeric identifier
+                        for part in reversed(path_parts):
+                            if part and (part.replace('.', '').replace('_', '').replace('-', '').isalnum()):
+                                patient_id = part.split('.')[0]  # Remove extension
+                                break
+                    
+                        if patient_id is None:
+                            import hashlib
+                            patient_id = hashlib.md5(image_path.encode()).hexdigest()[:8]
             
-            if patient_id not in patient_predictions:
-                patient_predictions[patient_id] = {}
+                if patient_id not in patient_predictions:
+                    patient_predictions[patient_id] = {}
             
-            # If this is the first CT for this patient, or if this CT has higher confidence, use it
-            if first_modality not in patient_predictions[patient_id]:
-                patient_predictions[patient_id][first_modality] = {
-                    'prediction': prediction['prediction'],  # CT prediction result (y_i) for patient i
-                    'class_name': pred_class_name,  # CT output class name for patient i: "high_grade" or "low_grade"
-                    'confidence': prediction['confidence']  # Store confidence to compare with other CT scans
-                }
-            else:
-                # Patient already has a CT prediction - keep the one with HIGHER confidence
-                # This ensures PET gets the most reliable CT prediction from the same patient
-                existing_confidence = patient_predictions[patient_id][first_modality].get('confidence', 0.0)
-                if prediction['confidence'] > existing_confidence:
-                    # This CT scan is more confident - use it instead
-                    patient_predictions[patient_id][first_modality] = {
+                # Store prediction for this patient (keep highest confidence if multiple)
+                if current_mod not in patient_predictions[patient_id]:
+                    patient_predictions[patient_id][current_mod] = {
+                    'prediction': prediction['prediction'],
+                    'class_name': pred_class_name,
+                    'confidence': prediction['confidence']
+                    }
+                else:
+                    existing_confidence = patient_predictions[patient_id][current_mod].get('confidence', 0.0)
+                    if prediction['confidence'] > existing_confidence:
+                        patient_predictions[patient_id][current_mod] = {
                         'prediction': prediction['prediction'],
                         'class_name': pred_class_name,
                         'confidence': prediction['confidence']
-                    }
+                        }
             
-            # Store ALL CT predictions with their identifiers for 1-to-1 matching
-            # This allows each PET image to get its corresponding CT image's prediction
-            if patient_id not in patient_ct_predictions_list:
-                patient_ct_predictions_list[patient_id] = []
-            
-            # Store CT prediction with slice_index and series_uid for matching
-            ct_prediction_entry = {
+                # Store ALL predictions with their identifiers for 1-to-1 matching
+                if patient_id not in patient_modality_predictions_list[current_mod]:
+                    patient_modality_predictions_list[current_mod][patient_id] = []
+
+                mod_prediction_entry = {
                 'image_id': img_info.get('image_id', img_info.get('image_path', 'unknown')),
                 'prediction': prediction['prediction'],
                 'class_name': pred_class_name,
                 'confidence': prediction['confidence']
-            }
-            
-            # Add slice_index and series_uid if available in image metadata
-            if 'slice_index' in img_info:
-                ct_prediction_entry['slice_index'] = img_info['slice_index']
-            if 'series_uid' in img_info:
-                ct_prediction_entry['series_uid'] = img_info['series_uid']
-            
-            patient_ct_predictions_list[patient_id].append(ct_prediction_entry)
-            
-            # Store CT prediction with slice_index for accurate matching
-            ct_result = {
-                'modalities_used': [first_modality],
+                }
+
+                if 'slice_index' in img_info:
+                    mod_prediction_entry['slice_index'] = img_info['slice_index']
+
+                if 'series_uid' in img_info:
+                    mod_prediction_entry['series_uid'] = img_info['series_uid']
+
+                patient_modality_predictions_list[current_mod][patient_id].append(mod_prediction_entry)
+
+                # Store result
+                mod_result = {
+                'modalities_used': [current_mod],
                 'prediction': prediction['prediction'],
                 'confidence': prediction['confidence'],
                 'label': label,
+                'used_context': False,
+                'context_from': [],
                 'probabilities': prediction.get('probabilities', {}),
                 'probabilities_array': prediction.get('probabilities_array', []),
                 'probabilities_before_boosting': prediction.get('probabilities_before_boosting'),
                 'logits': prediction.get('logits', []),
                 'patient_id': patient_id
-            }
-            # Add slice_index if available for matching
-            if 'slice_index' in img_info:
-                ct_result['slice_index'] = img_info['slice_index']
-            if 'image_id' in img_info:
-                ct_result['image_id'] = img_info['image_id']
-            results[case_id].append(ct_result)
-        except Exception as e:
-                print(f"Error processing {case_id} with {first_modality}: {e}", file=sys.stderr)
-                traceback.print_exc()
-    
-    # Aggregate predictions per patient for patient-level evaluation
-    patient_aggregated_ct = {}
-    for patient_id, slices in patient_ct_predictions_list.items():
-        if patient_id is None:
-            continue  # Skip invalid patient_ids
-        try:
-            patient_aggregated_ct[patient_id] = aggregate_patient_predictions(slices)
-            # Update patient_predictions with aggregated result
-            if patient_id and patient_id in patient_predictions:
-                patient_predictions[patient_id][first_modality] = {
-                    'prediction': patient_aggregated_ct[patient_id]['prediction'],
-                    'class_name': args.class_names[patient_aggregated_ct[patient_id]['prediction']],
-                    'confidence': patient_aggregated_ct[patient_id]['confidence']
                 }
-        except Exception as e:
-            print(f"Warning: Failed to aggregate CT predictions for patient {patient_id}: {e}", file=sys.stderr)
-            # Use first slice as fallback
-            if slices:
-                first_slice = slices[0]
-                if patient_id and patient_id in patient_predictions:
-                    patient_predictions[patient_id][first_modality] = {
+
+                if 'slice_index' in img_info:
+                    mod_result['slice_index'] = img_info['slice_index']
+
+                if 'image_id' in img_info:
+                    mod_result['image_id'] = img_info['image_id']
+
+                results[case_id].append(mod_result)
+
+            except Exception as e:
+                print(f"Error processing {case_id} with {current_mod}: {e}", file=sys.stderr)
+                traceback.print_exc()
+        
+        # Aggregate predictions per patient for patient-level evaluation (OUTSIDE try/except)
+        unique_patients = len(patient_modality_predictions_list[current_mod])
+        total_predictions = sum(len(preds) for preds in patient_modality_predictions_list[current_mod].values())
+        aggregated_count = 0
+        
+        
+        
+        for patient_id, slices in patient_modality_predictions_list[current_mod].items():
+            if patient_id is None:
+                print(f"Warning: Skipping aggregation for None patient_id (has {len(slices)} slices)", file=sys.stderr, flush=True)
+                continue
+
+            try:
+                aggregated = aggregate_patient_predictions(slices)
+                if patient_id not in patient_predictions:
+                    patient_predictions[patient_id] = {}
+                patient_predictions[patient_id][current_mod] = {
+                    'prediction': aggregated['prediction'],
+                    'class_name': args.class_names[aggregated['prediction']],
+                    'confidence': aggregated['confidence']
+                }
+                aggregated_count += 1
+            except Exception as e:
+                print(f"Warning: Failed to aggregate {current_mod} predictions for patient {patient_id}: {e}", file=sys.stderr, flush=True)
+                if slices:
+                    first_slice = slices[0]
+                    if patient_id not in patient_predictions:
+                        patient_predictions[patient_id] = {}
+                    patient_predictions[patient_id][current_mod] = {
                         'prediction': first_slice.get('prediction', 0),
                         'class_name': args.class_names[first_slice.get('prediction', 0)],
                         'confidence': first_slice.get('confidence', 0.5)
                     }
-    
-    # Summary of Step 1
-    unique_patients_ct = len(patient_predictions)
-    total_ct_predictions = sum(len(preds) for preds in patient_ct_predictions_list.values())
-    print(f"\nStep 1 Complete: Processed {len(first_mod_images)} {first_modality} images", flush=True)
-    print(f"  Stored {total_ct_predictions} {first_modality} slice predictions for {unique_patients_ct} unique patients", flush=True)
-    print(f"  Aggregated to {unique_patients_ct} patient-level predictions using weighted voting", flush=True)
-    
-    if second_modality:
-        # STEP 2: PET without CT context
-        print(f"\n{'='*60}")
-        print(f"Step 2: {second_modality} ({len(second_mod_images)} instances) WITHOUT {first_modality} context")
-        print(f"{'='*60}")
-    
-        # Initialize PET predictions list for aggregation (without context)
-        patient_pet_predictions_list_no_context = {}
+                    aggregated_count += 1
         
-        total_pet_images = len(second_mod_images)
         
-        for img_info in tqdm(second_mod_images, desc=f"Processing {second_modality} without {first_modality} context", total=total_pet_images, **tqdm_kwargs):
-            # Make case_id unique by including image_path (image_id may not be unique)
+        step_num += 1
+
+    # STEP N+1 to 2N-1: Process each modality with context from all previous ones
+    # For modality i, use context from modalities [0..i-1]
+    for mod_idx in range(1, len(modalities)):
+        current_mod = modalities[mod_idx]
+        context_mods = modalities[:mod_idx]  # All previous modalities
+        context_str = "+".join(context_mods)
+
+        mod_images = modality_images[current_mod]
+        filtered_mod_images = []
+        patients_with_context = set(patient_predictions.keys())
+
+        
+        # Match images to predictions by patient_id
+        # Goal: Each current modality image should get context from all previous modalities from the same patient
+        filtered_mod_images = []
+        patients_with_context = set(patient_predictions.keys())
+
+        # Match each current modality image to its corresponding previous modality predictions by patient_id
+        images_without_patient_id = 0
+        images_missing_context = 0
+        for img_info in mod_images:
+            patient_id = extract_patient_id_from_img(img_info)
+
+            # Use same fallback logic as Step 1-2
+            if patient_id is None:
+                patient_id = (
+                    img_info.get('patient_id') or
+                    img_info.get('image_id') or
+                    img_info.get('series_uid') or
+                    f"{img_info.get('class', 'unknown').lower()}_{os.path.basename(img_info.get('image_path', 'unknown'))}_{current_mod}"
+                )
+                if not patient_id:
+                    import hashlib
+                    image_path = img_info.get('image_path', '')
+                    if image_path:
+                        patient_id = hashlib.md5(image_path.encode('utf-8')).hexdigest()[:8]
+                    else:
+                        patient_id = f"unknown_{len(filtered_mod_images)}"
+                    images_without_patient_id += 1
+
+            # Check if this patient has predictions for ALL context modalities
+            has_all_context = True
+            if patient_id not in patients_with_context:
+                has_all_context = False
+                images_missing_context += 1
+            else:
+                for ctx_mod in context_mods:
+                    if ctx_mod not in patient_predictions[patient_id]:
+                        has_all_context = False
+                        break
+                if not has_all_context:
+                    images_missing_context += 1
+            
+            if has_all_context:
+                filtered_mod_images.append(img_info)
+
+        # Initialize predictions list for aggregation (with context)
+        patient_mod_predictions_list = {}
+        context_used_count = 0
+        total_mod_images = len(filtered_mod_images)
+
+        for img_info in tqdm(filtered_mod_images, desc=f"Processing {current_mod} with {context_str} context", total=total_mod_images, **tqdm_kwargs):
             image_basename = os.path.basename(img_info.get('image_path', ''))
-            case_id = f"{img_info['class'].lower()}_{image_basename}_{second_modality}"
+            case_id = f"{img_info['class'].lower()}_{image_basename}_{current_mod}"
             label = img_info['label']
+
             patient_id = extract_patient_id_from_img(img_info)
             
             if case_id not in results:
@@ -668,318 +815,218 @@ def main():
             
             try:
                 img = Image.open(img_info['image_path']).convert('RGB')
-                
-                # PET WITHOUT CT context - no previous_predictions
+
+                # Build previous_predictions dict from all context modalities
+                # BEST STRATEGY: 1-to-1 matching with intelligent fallbacks
+                previous_predictions = {}
+                context_used = False
+
+                if patient_id and patient_id in patient_predictions:
+                    # Check if patient has all context modalities
+                    has_all = True
+                    for ctx_mod in context_mods:
+                        if ctx_mod not in patient_predictions[patient_id]:
+                            has_all = False
+                            break
+                    
+                    if has_all:
+                        current_mod_slice_index = img_info.get('slice_index')
+                        
+                        # For each context modality, try to find best matching prediction
+                        for ctx_mod in context_mods:
+                            matched_ctx_prediction = None
+                            
+                            # Try to match by slice_index if available
+                            if current_mod_slice_index is not None and patient_id in patient_modality_predictions_list[ctx_mod]:
+                                # Strategy 1: Try exact match by slice_index
+                                for ctx_pred in patient_modality_predictions_list[ctx_mod][patient_id]:
+                                    if 'slice_index' in ctx_pred and ctx_pred['slice_index'] == current_mod_slice_index:
+                                        matched_ctx_prediction = ctx_pred
+                                        break
+                                
+                                # Strategy 2: If no exact match, find nearest slice_index
+                                if matched_ctx_prediction is None:
+                                    min_distance = float('inf')
+                                    for ctx_pred in patient_modality_predictions_list[ctx_mod][patient_id]:
+                                        if 'slice_index' in ctx_pred:
+                                            distance = abs(ctx_pred['slice_index'] - current_mod_slice_index)
+                                            if distance < min_distance:
+                                                min_distance = distance
+                                                matched_ctx_prediction = ctx_pred
+                            
+                            # Strategy 3: Use matched prediction or fallback to patient-level
+                            if matched_ctx_prediction is not None:
+                                previous_predictions[ctx_mod] = {
+                                    'prediction': matched_ctx_prediction['prediction'],
+                                    'class_name': matched_ctx_prediction['class_name'],
+                                    'confidence': matched_ctx_prediction.get('confidence', 0.5)
+                                }
+                            else:
+                                # Fallback: Use patient-level aggregated prediction
+                                if ctx_mod in patient_predictions[patient_id]:
+                                    ctx_result = patient_predictions[patient_id][ctx_mod].copy()
+                                    if 'confidence' not in ctx_result:
+                                        ctx_result['confidence'] = 0.5
+                                    previous_predictions[ctx_mod] = ctx_result
+                        
+                        if previous_predictions:
+                            context_used = True
+                            context_used_count += 1
+
+                # Model.predict() receives:
+                # 1. Patient i's current modality image
+                # 2. Patient i's previous modality output results from all context modalities
+                # The model uses prompts like: "Given that the {mod1} scan showed X, and the {mod2} scan showed Y, this {current_mod} scan shows..."
                 prediction = model.predict(
-                    images={second_modality: img},
-                    available_modalities=[second_modality],
+                    images={current_mod: img},
+                    available_modalities=[current_mod],
                     batch_size=args.batch_size,
                     preprocess=not args.no_preprocess,
                     temperature=args.temperature,
                     use_weighted_ensemble=not args.no_weighted_ensemble,
                     try_both_swaps=not args.no_swap_test,
                     aggressive_preprocess=args.aggressive_preprocess,
-                    previous_predictions=None  # NO CT context
+                    previous_predictions=previous_predictions if context_used else None
                 )
-                
+
+                # Store prediction for this patient
                 if patient_id is None:
                     continue
-                
+
                 if patient_id not in patient_predictions:
                     patient_predictions[patient_id] = {}
-                pred_class_name = args.class_names[prediction['prediction']]
                 
-                # Store all PET predictions for aggregation (without context)
-                if patient_id not in patient_pet_predictions_list_no_context:
-                    patient_pet_predictions_list_no_context[patient_id] = []
-                    
-                pet_prediction_entry = {
-                    'image_id': img_info['image_id'],
+                # Safeguard: Use class_names mapping with int prediction, fallback to str if KeyError
+                try:
+                    pred_class_name = args.class_names[prediction['prediction']]
+                except (KeyError, IndexError, TypeError):
+                    pred_class_name = str(prediction['prediction'])
+
+                # Store all predictions for aggregation
+                if patient_id not in patient_mod_predictions_list:
+                    patient_mod_predictions_list[patient_id] = []
+
+                mod_prediction_entry = {
+                    'image_id': img_info.get('image_id', img_info.get('image_path', 'unknown')),
                     'prediction': prediction['prediction'],
                     'class_name': pred_class_name,
                     'confidence': prediction['confidence']
                 }
-                    
                 if 'slice_index' in img_info:
-                    pet_prediction_entry['slice_index'] = img_info['slice_index']
+                    mod_prediction_entry['slice_index'] = img_info['slice_index']
                 if 'series_uid' in img_info:
-                    pet_prediction_entry['series_uid'] = img_info['series_uid']
-                
-                patient_pet_predictions_list_no_context[patient_id].append(pet_prediction_entry)
-                
-                pet_result_no_context = {
-                    'modalities_used': [second_modality],
+                    mod_prediction_entry['series_uid'] = img_info['series_uid']
+                patient_mod_predictions_list[patient_id].append(mod_prediction_entry)
+
+                # Store result with context information
+                mod_result_with_context = {
+                    'modalities_used': [current_mod],
                     'prediction': prediction['prediction'],
                     'confidence': prediction['confidence'],
                     'label': label,
-                    'used_context': False,  # NO CT context
-                    'context_from': [],
+                    'used_context': context_used,
+                    'context_from': context_mods if context_used else [],
                     'probabilities': prediction.get('probabilities', {}),
                     'probabilities_array': prediction.get('probabilities_array', []),
                     'probabilities_before_boosting': prediction.get('probabilities_before_boosting'),
                     'logits': prediction.get('logits', []),
                     'patient_id': patient_id
                 }
-                # Add slice_index if available for matching
                 if 'slice_index' in img_info:
-                    pet_result_no_context['slice_index'] = img_info['slice_index']
+                    mod_result_with_context['slice_index'] = img_info['slice_index']
                 if 'image_id' in img_info:
-                    pet_result_no_context['image_id'] = img_info['image_id']
-                    
-                results[case_id].append(pet_result_no_context)
+                    mod_result_with_context['image_id'] = img_info['image_id']
+                if case_id not in results:
+                    results[case_id] = []
+                results[case_id].append(mod_result_with_context)
             except Exception as e:
-                print(f"Error processing {case_id} with {second_modality} (no context): {e}", file=sys.stderr)
+                print(f"Error processing {case_id} with {current_mod}: {e}", file=sys.stderr)
                 traceback.print_exc()
-    # Aggregate PET predictions per patient (without context)
-    for patient_id, slices in patient_pet_predictions_list_no_context.items():
-        if patient_id is None:
-            continue
-        try:
-            aggregated = aggregate_patient_predictions(slices)
-            if patient_id not in patient_predictions:
-                patient_predictions[patient_id] = {}
-            patient_predictions[patient_id][f"{second_modality}_no_context"] = {
-                'prediction': aggregated['prediction'],
-                'class_name': args.class_names[aggregated['prediction']],
-                'confidence': aggregated['confidence']
-            }
-        except Exception as e:
-            print(f"Warning: Failed to aggregate PET (no context) predictions for patient {patient_id}: {e}", file=sys.stderr)
-    
-    print(f"\nStep 2 Complete: Processed {len(second_mod_images)} {second_modality} images WITHOUT {first_modality} context", flush=True)
-    unique_patients_pet_no_context = len(patient_pet_predictions_list_no_context)
-    total_pet_no_context = sum(len(preds) for preds in patient_pet_predictions_list_no_context.values())
-    print(f"  Aggregated {total_pet_no_context} {second_modality} slice predictions to {unique_patients_pet_no_context} patient-level predictions", flush=True)
-    
-    # STEP 3: PET with CT context
-    print(f"\n{'='*60}")
-    print(f"Step 3: {second_modality} ({len(second_mod_images)} instances) WITH {first_modality} context")
-    print(f"{'='*60}")
-    
-    # Match PET images to CT predictions by patient_id
-    # Goal: Each PET sample should get CT information from the same patient
-    # Patient i's PET scan gets Patient i's CT result (y_i)
-    filtered_second_mod_images = []
-    patients_with_ct = set(patient_predictions.keys())
-        
-    # Match each PET image to its corresponding CT prediction by patient_id
-    # IMPORTANT: Use the SAME extraction function as Step 1 to ensure matching
-    for img_info in second_mod_images:
-        patient_id = extract_patient_id_from_img(img_info)  # Use same function as Step 1
-            
-        # Check if this patient has CT prediction from Step 1
-        if patient_id in patients_with_ct and first_modality in patient_predictions[patient_id]:
-            # This PET image will get CT information from the same patient
-            # Patient i's PET gets Patient i's CT result
-            filtered_second_mod_images.append(img_info)
-        
-    # Initialize PET predictions list for aggregation (with context)
-    patient_pet_predictions_list = {}
-        
-    context_used_count = 0
-    total_pet_images = len(filtered_second_mod_images)
-        
-    for img_info in tqdm(filtered_second_mod_images, desc=f"Processing {second_modality} with {first_modality} context", total=total_pet_images, **tqdm_kwargs):
-        # Make case_id unique by including image_path (image_id may not be unique)
-        image_basename = os.path.basename(img_info.get('image_path', ''))
-        case_id = f"{img_info['class'].lower()}_{image_basename}_{second_modality}"
-        label = img_info['label']
-        patient_id = extract_patient_id_from_img(img_info)  # Use same extraction as Step 1
-        
-        if case_id not in results:
-            results[case_id] = []
-        
-        try:
-            img = Image.open(img_info['image_path']).convert('RGB')
-            
-            # Get CT prediction result (y_i) from patient i (from Step 1)
-            # BEST STRATEGY: 1-to-1 matching with intelligent fallbacks
-            # 1. Try exact match by slice_index
-            # 2. If not found, try nearest slice_index
-            # 3. If still not found, use patient-level (highest confidence CT)
-            previous_predictions = None
-            context_used = False
-                
-            if patient_id and patient_id in patient_predictions and first_modality in patient_predictions[patient_id]:
-                matched_ct_prediction = None
-                pet_slice_index = img_info.get('slice_index')
-                    
-                if patient_id in patient_ct_predictions_list and pet_slice_index is not None:
-                        # Strategy 1: Try exact match by slice_index
-                        for ct_pred in patient_ct_predictions_list[patient_id]:
-                            if 'slice_index' in ct_pred and ct_pred['slice_index'] == pet_slice_index:
-                                matched_ct_prediction = ct_pred
-                                break
-                        
-                        # Strategy 2: If no exact match, find nearest slice_index
-                        if matched_ct_prediction is None:
-                            min_distance = float('inf')
-                            for ct_pred in patient_ct_predictions_list[patient_id]:
-                                if 'slice_index' in ct_pred:
-                                    distance = abs(ct_pred['slice_index'] - pet_slice_index)
-                                    if distance < min_distance:
-                                        min_distance = distance
-                                        matched_ct_prediction = ct_pred
-                    
-                # Strategy 3: Use matched CT prediction, or fallback to patient-level
-                if matched_ct_prediction is not None:
-                        # Use 1-to-1 matched CT prediction (include confidence for boosting)
-                        patient_i_ct_result = {
-                            'prediction': matched_ct_prediction['prediction'],
-                            'class_name': matched_ct_prediction['class_name'],
-                            'confidence': matched_ct_prediction.get('confidence', 0.5)  # Include confidence for PET boosting
-                        }
-                else:
-                        # Fallback: Use patient-level CT prediction (highest confidence)
-                        patient_i_ct_result = patient_predictions[patient_id][first_modality]
-                        # Ensure confidence is present
-                        if 'confidence' not in patient_i_ct_result:
-                            patient_i_ct_result['confidence'] = 0.5
-                    
-                previous_predictions = {
-                        first_modality: patient_i_ct_result  # Patient i's CT result → Patient i's PET
-                }
-                context_used = True
-                context_used_count += 1
-                
-            # Model.predict() receives:
-            # 1. Patient i's PET image
-            # 2. Patient i's CT output result (y_i) from Step 1
-            # The model uses prompts like: "Given that the CT scan showed high_grade, this PET scan shows..."
-            # Simple: "hey CT gave this result, what's for PET?"
-            prediction = model.predict(
-                images={second_modality: img},  # Patient i's PET image
-                available_modalities=[second_modality],
-                batch_size=args.batch_size,
-                preprocess=not args.no_preprocess,
-                temperature=args.temperature,
-                use_weighted_ensemble=not args.no_weighted_ensemble,
-                try_both_swaps=not args.no_swap_test,
-                aggressive_preprocess=args.aggressive_preprocess,
-                previous_predictions=previous_predictions  # Patient i's CT result (y_i) → given to Patient i's PET
-            )
-                
-            # Store prediction for this patient
+
+        # Aggregate predictions per patient
+        aggregated_count = 0
+        for patient_id, slices in patient_mod_predictions_list.items():
             if patient_id is None:
-                # Skip if no valid patient_id
+                print(f"Warning: Skipping aggregation for None patient_id in Step {step_num} (has {len(slices)} slices)", 
+                    file=sys.stderr, flush=True)
                 continue
-                
-            if patient_id not in patient_predictions:
-                patient_predictions[patient_id] = {}
-            pred_class_name = args.class_names[prediction['prediction']]
-                
-            # Store all PET predictions for aggregation
-            if patient_id not in patient_pet_predictions_list:
-                patient_pet_predictions_list[patient_id] = []
-                
-            pet_prediction_entry = {
-                'image_id': img_info['image_id'],
-                'prediction': prediction['prediction'],
-                'class_name': pred_class_name,
-                'confidence': prediction['confidence']
-            }
-                
-            if 'slice_index' in img_info:
-                pet_prediction_entry['slice_index'] = img_info['slice_index']
-            if 'series_uid' in img_info:
-                pet_prediction_entry['series_uid'] = img_info['series_uid']
-                
-            patient_pet_predictions_list[patient_id].append(pet_prediction_entry)
-                
-            # Store PET prediction (with CT context) with slice_index for accurate matching
-            pet_result_with_context = {
-                'modalities_used': [second_modality],
-                'prediction': prediction['prediction'],
-                'confidence': prediction['confidence'],
-                'label': label,
-                'used_context': context_used,
-                'context_from': [first_modality] if context_used else [],
-                'probabilities': prediction.get('probabilities', {}),
-                'probabilities_array': prediction.get('probabilities_array', []),
-                'probabilities_before_boosting': prediction.get('probabilities_before_boosting'),
-                'logits': prediction.get('logits', []),
-                'patient_id': patient_id
-            }
-            # Add slice_index if available for matching
-            if 'slice_index' in img_info:
-                pet_result_with_context['slice_index'] = img_info['slice_index']
-            if 'image_id' in img_info:
-                pet_result_with_context['image_id'] = img_info['image_id']
-            results[case_id].append(pet_result_with_context)
-        except Exception as e:
-            print(f"Error processing {case_id} with {second_modality}: {e}", file=sys.stderr)
-            traceback.print_exc()
-        
-    # Aggregate PET predictions per patient
-    patient_aggregated_pet = {}
-    for patient_id, slices in patient_pet_predictions_list.items():
-        if patient_id is None:
-            continue  # Skip invalid patient_ids
-        try:
-            patient_aggregated_pet[patient_id] = aggregate_patient_predictions(slices)
-            # Update patient_predictions with aggregated result
-            if patient_id and patient_id in patient_predictions:
-                patient_predictions[patient_id][second_modality] = {
-                        'prediction': patient_aggregated_pet[patient_id]['prediction'],
-                        'class_name': args.class_names[patient_aggregated_pet[patient_id]['prediction']],
-                        'confidence': patient_aggregated_pet[patient_id]['confidence']
+            try:
+                aggregated = aggregate_patient_predictions(slices)
+                if patient_id not in patient_predictions:
+                    patient_predictions[patient_id] = {}
+                patient_predictions[patient_id][current_mod] = {
+                    'prediction': aggregated['prediction'],
+                    'class_name': args.class_names[aggregated['prediction']],
+                    'confidence': aggregated['confidence']
                 }
-        except Exception as e:
-            print(f"Warning: Failed to aggregate PET predictions for patient {patient_id}: {e}", file=sys.stderr)
-            # Use first slice as fallback
-            if slices:
-                first_slice = slices[0]
-                if patient_id and patient_id in patient_predictions:
-                        patient_predictions[patient_id][second_modality] = {
-                            'prediction': first_slice.get('prediction', 0),
-                            'class_name': args.class_names[first_slice.get('prediction', 0)],
-                            'confidence': first_slice.get('confidence', 0.5)
-                        }
-        
-    total_pet_predictions = sum(len(preds) for preds in patient_pet_predictions_list.values())
-    unique_patients_pet = len(patient_pet_predictions_list)
-    print(f"\nStep 3 Complete: Processed {context_used_count} {second_modality} images using {first_modality} context", flush=True)
-    print(f"  Aggregated {total_pet_predictions} {second_modality} slice predictions to {unique_patients_pet} patient-level predictions", flush=True)
+                aggregated_count += 1
+            except Exception as e:
+                print(f"Warning: Failed to aggregate {current_mod} predictions for patient {patient_id}: {e}", 
+                    file=sys.stderr, flush=True)
+                if slices:
+                    first_slice = slices[0]
+                    if patient_id not in patient_predictions:
+                        patient_predictions[patient_id] = {}
+                    patient_predictions[patient_id][current_mod] = {
+                        'prediction': first_slice.get('prediction', 0),
+                        'class_name': args.class_names[first_slice.get('prediction', 0)],
+                        'confidence': first_slice.get('confidence', 0.5)
+                    }
+                    aggregated_count += 1
+
+        # Calculate statistics before debug check
+        total_mod_predictions = sum(len(slices) for slices in patient_mod_predictions_list.values())
+        unique_patients_mod = len(patient_mod_predictions_list)
+
+
+        step_num += 1
     
     # Evaluate results
-    print("\nEvaluating results...", flush=True)
     if not results:
         print("Warning: No results to evaluate. Check if images were processed successfully.", file=sys.stderr, flush=True)
         return
     
     # Count results by modality
     total_results = sum(len(preds) for preds in results.values())
-    
-    # Count by step type
-    ct_count = 0
-    pet_no_ctx_count = 0
-    pet_with_ctx_count = 0
+
+    # Count by step type (for logging/debugging)
+    step_counts = {}
     for case_id, preds in results.items():
         for pred in preds:
             mods = pred.get('modalities_used', [])
             used_ctx = pred.get('used_context', False)
             ctx_from = pred.get('context_from', [])
-            if mods == [first_modality]:
-                ct_count += 1
-            elif mods == [second_modality] if second_modality else []:
-                if used_ctx and first_modality in ctx_from:
-                    pet_with_ctx_count += 1
+
+            # Determine step name based on modalities and context
+            if len(mods) == 1:
+                mod = mods[0]
+                if used_ctx and ctx_from:
+                    # Modality with context
+                    step_name = f"{mod}_with_{'+'.join(ctx_from)}"
                 else:
-                    pet_no_ctx_count += 1
-    
+                    # Modality alone
+                    step_name = mod
+            else:
+                # Multiple modalities together
+                step_name = "+".join(mods)
+
+            if step_name not in step_counts:
+                step_counts[step_name] = 0
+            step_counts[step_name] += 1
+
     try:
         evaluation_results = evaluate_sequential_modalities(results, args.modalities)
     except Exception as e:
         print(f"ERROR: Failed to evaluate results: {e}", file=sys.stderr, flush=True)
         traceback.print_exc()
         return
-    
-    # Add patient-level analysis if we have both modalities
+
+    # Add patient-level analysis if we have multiple modalities
     if len(args.modalities) >= 2 and 'agreement_metrics' in evaluation_results:
         try:
             # Extract patient-level predictions for agreement analysis
-            patient_ct_preds = {}
-            patient_pet_preds = {}
+            # For each modality, collect predictions WITHOUT context (standalone)
+            patient_mod_preds = {mod: {} for mod in args.modalities}
             
             for case_id, case_results in results.items():
                 for result in case_results:
@@ -990,137 +1037,112 @@ def main():
                     mods_used = result.get('modalities_used', [])
                     used_context = result.get('used_context', False)
                     
-                    if len(mods_used) == 1:
+                    # CRITICAL: Only collect predictions WITHOUT context for agreement analysis
+                    # (predictions with context are combined, not pure modality)
+                    if len(mods_used) == 1 and not used_context:
                         mod = mods_used[0]
-                        if mod == args.modalities[0]:
-                            # CT predictions (no context)
-                            if patient_id not in patient_ct_preds:
-                                patient_ct_preds[patient_id] = []
-                            patient_ct_preds[patient_id].append(result)
-                        elif mod == args.modalities[1]:
-                            # CRITICAL: Only collect PET WITHOUT context for agreement analysis
-                            # (PET with context is CT+PET, not pure PET)
-                            if not used_context:
-                                if patient_id not in patient_pet_preds:
-                                    patient_pet_preds[patient_id] = []
-                                patient_pet_preds[patient_id].append(result)
+                        if mod in patient_mod_preds:
+                            if patient_id not in patient_mod_preds[mod]:
+                                patient_mod_preds[mod][patient_id] = []
+                            patient_mod_preds[mod][patient_id].append(result)
             
             # Aggregate to patient-level for agreement analysis
-            # CRITICAL: Sort patient_ids to ensure consistent ordering for matching
-            common_patient_ids = sorted(set(patient_ct_preds.keys()) & set(patient_pet_preds.keys()))
-            
-            patient_level_ct = []
-            patient_level_pet = []
+            # Find common patients across all modalities
+            # For 2 modalities: compare first two
+            mod1, mod2 = args.modalities[0], args.modalities[1]
+            common_patient_ids = sorted(set(patient_mod_preds[mod1].keys()) & set(patient_mod_preds[mod2].keys()))
+
+            patient_level_mod1 = []
+            patient_level_mod2 = []
             patient_ids_list = []
-            
+
             for patient_id in common_patient_ids:
-                ct_slices = patient_ct_preds[patient_id]
-                pet_slices = patient_pet_preds[patient_id]
-                
+                mod1_slices = patient_mod_preds[mod1][patient_id]
+                mod2_slices = patient_mod_preds[mod2][patient_id]
+
                 # Skip if either list is empty
-                if not ct_slices or not pet_slices:
+                if not mod1_slices or not mod2_slices:
                     continue
-                
-                # Aggregate CT predictions for this patient
-                ct_aggregated = aggregate_patient_predictions(ct_slices)
-                # Aggregate PET predictions for this patient
-                pet_aggregated = aggregate_patient_predictions(pet_slices)
-                
+
+                # Aggregate predictions for this patient
+                mod1_aggregated = aggregate_patient_predictions(mod1_slices)
+                mod2_aggregated = aggregate_patient_predictions(mod2_slices)
+
                 # Add full prediction info for certainty analysis
                 # For patient-level, use pre-boosting probabilities for realistic certainty metrics
-                # For CT: use aggregated confidence (no boosting applied to CT)
-                ct_conf = ct_aggregated['confidence']
-                
-                # For PET: calculate confidence from pre-boosting probabilities (shows real model behavior)
-                # Aggregate pre-boosting probabilities across slices for this patient
-                pet_probs_before_list = []
-                for pet_slice in pet_slices:
-                    probs_before = pet_slice.get('probabilities_before_boosting')
+                mod1_conf = mod1_aggregated['confidence']
+
+                # Calculate confidence from pre-boosting probabilities if available
+                mod2_probs_before_list = []
+                for mod2_slice in mod2_slices:
+                    probs_before = mod2_slice.get('probabilities_before_boosting')
                     if probs_before is not None and len(probs_before) >= 2:
-                        pet_probs_before_list.append(np.array(probs_before))
-                
-                if pet_probs_before_list:
-                    # Average pre-boosting probabilities across slices
-                    avg_probs_before = np.mean(pet_probs_before_list, axis=0)
-                    pet_conf = float(np.max(avg_probs_before))
+                        mod2_probs_before_list.append(np.array(probs_before))
+
+                if mod2_probs_before_list:
+                    avg_probs_before = np.mean(mod2_probs_before_list, axis=0)
+                    mod2_conf = float(np.max(avg_probs_before))
                 else:
-                    # Fallback: use first slice's pre-boosting or aggregated confidence
-                    first_pet_slice = pet_slices[0]
-                    probs_before = first_pet_slice.get('probabilities_before_boosting')
+                    first_mod2_slice = mod2_slices[0]
+                    probs_before = first_mod2_slice.get('probabilities_before_boosting')
                     if probs_before is not None and len(probs_before) >= 2:
-                        pet_conf = float(np.max(np.array(probs_before)))
+                        mod2_conf = float(np.max(np.array(probs_before)))
                     else:
-                        pet_conf = pet_aggregated['confidence']
-                
-                ct_full = {
-                    'prediction': ct_aggregated['prediction'],
-                    'confidence': ct_conf,
-                    'probabilities': ct_slices[0].get('probabilities', {}),
-                    'probabilities_array': ct_slices[0].get('probabilities_array', []),
-                    'logits': ct_slices[0].get('logits', []),
-                    'patient_id': patient_id  # Add patient_id for verification
+                        mod2_conf = mod2_aggregated['confidence']
+
+                mod1_full = {
+                    'prediction': mod1_aggregated['prediction'],
+                    'confidence': mod1_conf,
+                    'probabilities': mod1_slices[0].get('probabilities', {}),
+                    'probabilities_array': mod1_slices[0].get('probabilities_array', []),
+                    'logits': mod1_slices[0].get('logits', []),
+                    'patient_id': patient_id
                 }
-                pet_full = {
-                    'prediction': pet_aggregated['prediction'],
-                    'confidence': pet_conf,  # Use pre-boosting confidence
-                    'probabilities': pet_slices[0].get('probabilities', {}),
-                    'probabilities_array': pet_slices[0].get('probabilities_array', []),
-                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting'),
-                    'logits': pet_slices[0].get('logits', []),
-                    'patient_id': patient_id  # Add patient_id for verification
+                mod2_full = {
+                    'prediction': mod2_aggregated['prediction'],
+                    'confidence': mod2_conf,
+                    'probabilities': mod2_slices[0].get('probabilities', {}),
+                    'probabilities_array': mod2_slices[0].get('probabilities_array', []),
+                    'probabilities_before_boosting': mod2_slices[0].get('probabilities_before_boosting'),
+                    'logits': mod2_slices[0].get('logits', []),
+                    'patient_id': patient_id
                 }
-                
-                patient_level_ct.append(ct_full)
-                patient_level_pet.append(pet_full)
+
+                patient_level_mod1.append(mod1_full)
+                patient_level_mod2.append(mod2_full)
                 patient_ids_list.append(patient_id)
-            
+
             # Analyze patient-level vs slice-level agreement
-            if patient_level_ct and patient_level_pet:
-                # Get slice-level agreement for comparison
+            if patient_level_mod1 and patient_level_mod2:
                 slice_level_agreement = evaluation_results.get('agreement_metrics', {})
-                
-                # Analyze patient-level agreement and compare to slice-level
+
                 patient_agreement_analysis = analyze_patient_level_agreement(
                     slice_level_agreement,
-                    patient_level_ct,
-                    patient_level_pet,
+                    patient_level_mod1,
+                    patient_level_mod2,
                     patient_ids_list
                 )
                 evaluation_results['patient_level_agreement'] = patient_agreement_analysis
-            
-            # Analyze CT context influence on PET predictions
-            try:
-                from src.utils.evaluation import analyze_ct_context_influence
-                pet_predictions_for_context = []
-                for case_id, case_results in results.items():
-                    for result in case_results:
-                        mods_used = result.get('modalities_used', [])
-                        if len(mods_used) == 1 and mods_used[0] == args.modalities[1]:
-                            # This is a PET prediction
-                            if result.get('used_context', False):
-                                pet_predictions_for_context.append(result)
-                
-                if pet_predictions_for_context:
-                    context_influence = analyze_ct_context_influence(pet_predictions_for_context)
-                    evaluation_results['ct_context_influence'] = context_influence
-            except Exception as e:
-                print(f"Warning: Failed to analyze CT context influence: {e}", file=sys.stderr, flush=True)
-                traceback.print_exc()
         except Exception as e:
             print(f"Warning: Failed to complete patient-level analysis: {e}", file=sys.stderr, flush=True)
             traceback.print_exc()
     
-    # Print results
-    print_evaluation_results(evaluation_results)
+    # Save results with modality order in filename
+    # Format: results_MODELNAME_MOD1_MOD2_MOD3_...json
+    # Example: results_openai_clip-vit-base-patch32_CT_PET_MRI.json
+    model_name_safe = args.model_name.replace("/", "_")
+    modality_suffix = "_" + "_".join(modalities)
     
-    # Save results
     output_file = os.path.join(
         args.output_dir,
-        f'results_{args.model_name.replace("/", "_")}.json'
+        f'results_{model_name_safe}{modality_suffix}.json'
     )
     save_results(evaluation_results, output_file)
-    print(f"\nEvaluation complete. Results saved to {output_file}", flush=True)
 
+    # Print all evaluation results
+    print_evaluation_results(evaluation_results)
+    
+    print(f"\nResults saved to {output_file}", flush=True)
 
 if __name__ == '__main__':
     main()
