@@ -33,6 +33,7 @@ rsync -avz --progress \
   submit_openai_base.sh \
   submit_5_new_models.sh \
   submit_sequential_eval.sh \
+  submit_biomedclip.sh \
   run_llava_med.py \
   run_full_dataset.sh \
   sync_to_newton.sh \
