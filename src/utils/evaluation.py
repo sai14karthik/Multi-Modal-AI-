@@ -2,8 +2,8 @@
 Evaluation utilities for sequential modality feeding.
 Focuses on CERTAINTY DYNAMICS and MODEL BEHAVIOR ANALYSIS, not accuracy optimization.
 
-This module analyzes how modality changes affect prediction certainty:
-- Confidence scores across CT vs PET vs CT+PET
+This module analyzes how modality changes affect prediction certainty (generic for any modalities):
+- Confidence scores across modalities (Mod1, Mod2, Mod1+Mod2, etc.)
 - Entropy measures (uncertainty quantification)
 - Logit distributions and stability
 - How modality disagreement affects confidence/logits
@@ -240,7 +240,7 @@ def evaluate_sequential_modalities(
     
     This analysis is designed to understand model behavior, not optimize accuracy.
     In zero-shot settings, accuracy near chance is expected; what matters is:
-    - How confidence changes across CT vs PET vs CT+PET
+    - How confidence changes across modalities (Mod1, Mod2, Mod1+Mod2, etc.)
     - Whether combining modalities increases or decreases certainty
     - Whether modality disagreement leads to lower confidence or unstable logits
     
@@ -628,38 +628,39 @@ def print_evaluation_results(evaluation_results: Dict):
             print(f"{step_name:<15} {acc:<12.4f} {avg_conf:<18.4f} {avg_entropy:<15.4f} {num_patients:<15}")
         
         # Patient-level overconfidence analysis
-        print("\n" + "-"*80)
-        print("PATIENT-LEVEL OVERCONFIDENCE ANALYSIS")
-        print("-"*80)
-        print("High-confidence incorrect predictions (confidence ≥ 0.7) - Critical reliability issue")
-        print()
-        print(f"{'Modality':<15} {'High-Conf Incorrect':<20} {'Rate':<12} {'Avg Conf (Wrong)':<18} {'Overconf Severity':<20}")
-        print("-"*80)
-        
-        for step_name in sorted_steps:
-            step_data = patient_level_results[step_name]
-            num_patients = step_data.get('num_samples', 0)
-            if num_patients == 0:
-                continue
+        if patient_level_results:
+            print("\n" + "-"*80)
+            print("PATIENT-LEVEL OVERCONFIDENCE ANALYSIS")
+            print("-"*80)
+            print("High-confidence incorrect predictions (confidence ≥ 0.7) - Critical reliability issue")
+            print()
+            print(f"{'Modality':<15} {'High-Conf Incorrect':<20} {'Rate':<12} {'Avg Conf (Wrong)':<18} {'Overconf Severity':<20}")
+            print("-"*80)
             
-            overconf = step_data.get('overconfidence_metrics', {})
-            high_conf_incorrect = overconf.get('high_conf_incorrect_count', 0)
-            high_conf_incorrect_rate = overconf.get('high_conf_incorrect_rate', 0.0)
-            avg_conf_wrong = overconf.get('avg_confidence_when_incorrect', 0.0)
-            overconf_severity = overconf.get('overconfidence_severity', 0.0)
+            for step_name in sorted_steps:
+                step_data = patient_level_results[step_name]
+                num_patients = step_data.get('num_samples', 0)
+                if num_patients == 0:
+                    continue
+                
+                overconf = step_data.get('overconfidence_metrics', {})
+                high_conf_incorrect = overconf.get('high_conf_incorrect_count', 0)
+                high_conf_incorrect_rate = overconf.get('high_conf_incorrect_rate', 0.0)
+                avg_conf_wrong = overconf.get('avg_confidence_when_incorrect', 0.0)
+                overconf_severity = overconf.get('overconfidence_severity', 0.0)
+                
+                print(f"{step_name:<15} {high_conf_incorrect:<20} {high_conf_incorrect_rate:<12.4f} {avg_conf_wrong:<18.4f} {overconf_severity:<20.4f}")
             
-            print(f"{step_name:<15} {high_conf_incorrect:<20} {high_conf_incorrect_rate:<12.4f} {avg_conf_wrong:<18.4f} {overconf_severity:<20.4f}")
-        
-        print("\n" + "-"*80)
-        print("INTERPRETATION:")
-        print("-"*80)
-        print("• High-Conf Incorrect: Number of patients where model was confident (≥0.7) but wrong")
-        print("• Rate: Proportion of all patients with high-confidence errors")
-        print("• Avg Conf (Wrong): Average confidence when prediction is incorrect")
-        print("• Overconf Severity: Average confidence of high-confidence incorrect predictions")
-        print("  → Higher values indicate more severe overconfidence (model very wrong but very confident)")
-    else:
-        print("Warning: Patient-level results not available.")
+            print("\n" + "-"*80)
+            print("INTERPRETATION:")
+            print("-"*80)
+            print("• High-Conf Incorrect: Number of patients where model was confident (≥0.7) but wrong")
+            print("• Rate: Proportion of all patients with high-confidence errors")
+            print("• Avg Conf (Wrong): Average confidence when prediction is incorrect")
+            print("• Overconf Severity: Average confidence of high-confidence incorrect predictions")
+            print("  → Higher values indicate more severe overconfidence (model very wrong but very confident)")
+        else:
+            print("Warning: Patient-level results not available.")
     
     # ============================================================================
     # SLICE-LEVEL CERTAINTY METRICS (for reference)
@@ -1140,14 +1141,14 @@ def analyze_ct_context_influence(
     ct_predictions: Optional[List[Dict]] = None
 ) -> Dict:
     """
-    CORE RESEARCH QUESTION: Does PET certainty increase when CT context is integrated?
+    CORE RESEARCH QUESTION: Does modality 2 certainty increase when modality 1 context is integrated?
     
-    This analysis determines whether the model actually uses CT context or ignores it.
-    Compares PET probabilities before and after CT context integration.
+    This analysis determines whether the model actually uses previous modality context or ignores it.
+    Compares predictions before and after context integration.
     
     Args:
-        pet_predictions: List of PET prediction dicts with 'probabilities_before_boosting'
-        ct_predictions: Optional list of CT predictions for comparison
+        pet_predictions: List of modality 2 prediction dicts with 'probabilities_before_boosting'
+        ct_predictions: Optional list of modality 1 predictions for comparison
     
     Returns:
         Dictionary with context influence metrics
@@ -1240,12 +1241,12 @@ def analyze_modality_agreement(
     debug: bool = False
 ) -> Dict:
     """
-    Analyze agreement/disagreement between CT and PET predictions.
+    Analyze agreement/disagreement between two modality predictions (generic).
     Focuses on how disagreement affects certainty (confidence, logits).
     
     Args:
-        ct_predictions: List of CT prediction dicts (should have 'prediction', 'confidence', 'logits')
-        pet_predictions: List of PET prediction dicts (should have 'prediction', 'confidence', 'logits')
+        ct_predictions: List of modality 1 prediction dicts (should have 'prediction', 'confidence', 'logits')
+        pet_predictions: List of modality 2 prediction dicts (should have 'prediction', 'confidence', 'logits')
         patient_ids: Optional list of patient IDs for matching (if None, assumes same order)
     
     Returns:
@@ -1628,12 +1629,12 @@ def analyze_patient_level_agreement(
     Analyze whether modality agreement increases at patient level vs slice level.
     
     Key question: Does aggregating slices per patient lead to better agreement
-    between CT and PET predictions?
+    between two modality predictions?
     
     Args:
         slice_level_agreement: Agreement metrics from slice-level analysis
-        patient_level_ct: List of patient-level CT predictions
-        patient_level_pet: List of patient-level PET predictions
+        patient_level_ct: List of patient-level modality 1 predictions
+        patient_level_pet: List of patient-level modality 2 predictions
         patient_ids: List of patient IDs matching the predictions
     
     Returns:
@@ -1710,13 +1711,13 @@ def analyze_pet_vs_ct_confidence(
     patient_ids: Optional[List[str]] = None
 ) -> Dict:
     """
-    CORE RESEARCH QUESTION: Does PET consistently produce higher confidence than CT?
+    CORE RESEARCH QUESTION: Does modality 2 consistently produce higher confidence than modality 1?
     
-    This is a fundamental question about modality behavior in zero-shot VLMs.
+    This is a fundamental question about modality behavior in zero-shot VLMs (generic for any two modalities).
     
     Args:
-        ct_predictions: List of CT prediction dicts
-        pet_predictions: List of PET prediction dicts
+        ct_predictions: List of modality 1 prediction dicts
+        pet_predictions: List of modality 2 prediction dicts
         patient_ids: Optional list of patient IDs for matching
     
     Returns:

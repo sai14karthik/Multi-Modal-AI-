@@ -164,6 +164,7 @@ from PIL import Image
 import torch
 import numpy as np
 from tqdm import tqdm
+from src.utils.dicom_utils import load_image_smart, is_dicom_file
 
 # Configure tqdm for better display in log files (Slurm jobs)
 # Use file=sys.stderr for better compatibility with Slurm log files
@@ -596,7 +597,8 @@ def main():
                 results[case_id] = []
         
             try:
-                img = Image.open(img_info['image_path']).convert('RGB')
+                # Smart loader: handles both regular images and DICOM files
+                img = load_image_smart(img_info['image_path'])
             
                 prediction = model.predict(
                 images={current_mod: img},
@@ -814,7 +816,8 @@ def main():
                 results[case_id] = []
             
             try:
-                img = Image.open(img_info['image_path']).convert('RGB')
+                # Smart loader: handles both regular images and DICOM files
+                img = load_image_smart(img_info['image_path'])
 
                 # Build previous_predictions dict from all context modalities
                 # BEST STRATEGY: 1-to-1 matching with intelligent fallbacks

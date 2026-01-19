@@ -26,19 +26,13 @@ rsync -avz --progress \
   README.md \
   run.sh \
   data/dataset_config.yaml \
+  data/cmb_aml_config.yaml \
   .env.example \
   submit_top5_models.sh \
-  submit_llava_med.sh \
-  submit_llava_med_newton.sh \
-  submit_openai_base.sh \
   submit_5_new_models.sh \
-  submit_sequential_eval.sh \
-  submit_biomedclip.sh \
-  run_llava_med.py \
-  run_full_dataset.sh \
+  submit_single_model.sh \
   sync_to_newton.sh \
   verify_before_sync.sh \
-  test_n_modalities.sh \
   third_party/llava-med/llava/model/builder.py \
   sa808371@newton.ist.ucf.edu:~/Multi-Modal-AI/
 

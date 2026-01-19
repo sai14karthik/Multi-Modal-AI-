@@ -108,9 +108,12 @@ htmlcov/
 # test_*.py
 # quick_test_*.py
 
-# Shell scripts - track important ones, ignore temporary ones
-# Temporary job scripts (created by submission scripts)
+# Shell scripts - track important ones, ignore temporary/running ones
+# Temporary job scripts (created by submission scripts during execution)
 submit_*_tmp.sh
-# All .sh files are tracked by default (important for project infrastructure)
-# Uncomment the line below if you want to ignore all .sh files:
-# *.sh
+*_tmp.sh
+*_temp.sh
+# Running/temporary scripts (created during job execution)
+*.sh.tmp
+*.sh.temp
+# Keep important .sh files tracked (submit_*.sh, sync_*.sh, test_*.sh, run_*.sh, etc.)

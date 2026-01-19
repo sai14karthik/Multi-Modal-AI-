@@ -519,42 +519,42 @@ class MultimodalModelWrapper:
             context_prefix = f"Given that {context_str}, this {current_modality} shows "
 
         if self._default_classes:
-            # Strategy 1: Direct descriptive prompts (lung-specific)
+            # Strategy 1: Direct descriptive prompts (generic medical imaging)
             healthy_direct = [
-                "a medical lung CT or PET scan showing healthy normal lung tissue with no tumors or abnormalities",
-                "a lung imaging scan with normal anatomy and no pathological findings",
-                "a healthy lung medical image showing normal tissue structure without disease",
-                "a normal lung scan image with no masses, lesions, or tumors visible"
+                f"a medical {current_modality} showing healthy normal tissue with no tumors or abnormalities",
+                f"a {current_modality} imaging scan with normal anatomy and no pathological findings",
+                f"a healthy medical image showing normal tissue structure without disease",
+                f"a normal {current_modality} scan image with no masses, lesions, or tumors visible"
             ]
             tumor_direct = [
-                "a medical lung CT or PET scan showing a visible lung tumor or malignant mass",
-                "a lung imaging scan with abnormal mass, tumor growth, or cancerous lesion",
-                "a lung medical image showing pathology, tumor, or abnormal tissue",
-                "a lung scan image with visible tumor, mass, or pathological abnormality"
+                f"a medical {current_modality} showing a visible tumor or malignant mass",
+                f"a {current_modality} imaging scan with abnormal mass, tumor growth, or cancerous lesion",
+                f"a medical image showing pathology, tumor, or abnormal tissue",
+                f"a {current_modality} scan image with visible tumor, mass, or pathological abnormality"
             ]
             
-            # Strategy 2: Clinical terminology (lung-specific)
+            # Strategy 2: Clinical terminology (generic)
             healthy_clinical = [
-                "a lung scan with normal lung parenchyma and no abnormal findings",
-                "a medical lung image showing normal pulmonary anatomy without pathology",
-                "a lung scan demonstrating normal lung tissue architecture"
+                f"a {current_modality} scan with normal tissue and no abnormal findings",
+                f"a medical image showing normal anatomy without pathology",
+                f"a {current_modality} scan demonstrating normal tissue architecture"
             ]
             tumor_clinical = [
-                "a lung scan with an intrapulmonary mass or neoplasm",
-                "a medical lung image showing an abnormal lung lesion or tumor",
-                "a lung scan demonstrating pathological lung tissue or mass"
+                f"a {current_modality} scan with an abnormal mass or neoplasm",
+                f"a medical image showing an abnormal lesion or tumor",
+                f"a {current_modality} scan demonstrating pathological tissue or mass"
             ]
             
-            # Strategy 3: Simple, clear descriptions (lung-specific)
+            # Strategy 3: Simple, clear descriptions (generic)
             healthy_simple = [
-                "a normal healthy lung scan",
-                "a lung scan with no tumor",
-                "a healthy lung image"
+                f"a normal healthy {current_modality} scan",
+                f"a {current_modality} scan with no tumor",
+                f"a healthy medical image"
             ]
             tumor_simple = [
-                "a lung scan with a tumor",
-                "a lung scan showing a lung tumor",
-                "an abnormal lung scan with tumor"
+                f"a {current_modality} scan with a tumor",
+                f"a {current_modality} scan showing a tumor",
+                f"an abnormal {current_modality} scan with tumor"
             ]
             
             first_prompts = healthy_direct + healthy_clinical + healthy_simple
@@ -566,110 +566,110 @@ class MultimodalModelWrapper:
                 first_prompts = [context_prefix + prompt for prompt in first_prompts]
                 second_prompts = [context_prefix + prompt for prompt in second_prompts]
         else:
-            # Detect if this is lung cancer grading (high_grade vs low_grade)
-            is_lung_cancer_grading = any(
+            # Detect if this is cancer grading (high_grade vs low_grade) - generic for any cancer type
+            is_cancer_grading = any(
                 keyword in first_class.lower() + second_class.lower()
-                for keyword in ["high_grade", "low_grade", "grade", "lung", "nsclc", "adenocarcinoma", "squamous"]
+                for keyword in ["high_grade", "low_grade", "grade"]
             )
             
-            if is_lung_cancer_grading:
-                # Enhanced lung cancer grade-specific prompts with medical terminology
+            if is_cancer_grading:
+                # Enhanced cancer grade-specific prompts with medical terminology (generic for any cancer type)
                 # High-grade typically: larger tumors, more aggressive, poor differentiation, invasion
                 # Low-grade typically: smaller tumors, less aggressive, well-differentiated, localized
                 is_high_grade_first = "high" in first_class.lower()
                 
                 if is_high_grade_first:
                     # High-grade prompts (more aggressive, invasive characteristics)
-                    # Enhanced with specific medical imaging features for lung cancer
+                    # Generic cancer grading prompts
                     if context_prefix:
-                        # Context-aware prompts with previous modality context - improved medical terminology
+                        # Context-aware prompts with previous modality context
                         first_prompts = [
-                            f"{context_prefix}{current_modality} shows {first_class} non-small cell lung cancer (NSCLC) with aggressive tumor characteristics and high SUVmax values",
-                            f"{context_prefix}{current_modality} shows {first_class} lung cancer demonstrating large primary tumor size (>3cm), lymph node invasion, and distant metastasis",
-                            f"{context_prefix}{current_modality} shows {first_class} lung adenocarcinoma or squamous cell carcinoma with poor differentiation, advanced T-stage, and high metabolic activity (SUV >2.5)",
-                            f"{context_prefix}{current_modality} shows {first_class} lung tumor with intense FDG uptake, irregular spiculated margins, and pleural invasion",
-                            f"{context_prefix}{current_modality} shows {first_class} lung cancer pathology with invasive growth pattern, mediastinal lymphadenopathy, and high-grade histology",
-                            f"{context_prefix}{current_modality} shows {first_class} lung cancer with high-grade features: large mass (>5cm), irregular spiculated borders, cavitation, and aggressive appearance on FDG-PET",
-                            f"{context_prefix}{current_modality} shows {first_class} advanced stage lung cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
-                            f"{context_prefix}{current_modality} shows {first_class} lung cancer with extensive FDG-avid disease, multiple pulmonary nodules, and extrapulmonary spread",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer with aggressive tumor characteristics and high metabolic activity",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer demonstrating large primary tumor size (>3cm), lymph node invasion, and distant metastasis",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer with poor differentiation, advanced staging, and high metabolic activity",
+                            f"{context_prefix}{current_modality} shows {first_class} tumor with intense metabolic uptake, irregular margins, and invasion",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer pathology with invasive growth pattern, lymphadenopathy, and high-grade histology",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer with high-grade features: large mass (>5cm), irregular borders, and aggressive appearance",
+                            f"{context_prefix}{current_modality} shows {first_class} advanced stage cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer with extensive disease, multiple lesions, and spread",
                         ]
                         second_prompts = [
-                            f"{context_prefix}{current_modality} shows {second_class} non-small cell lung cancer (NSCLC) with less aggressive tumor characteristics and moderate SUVmax values",
-                            f"{context_prefix}{current_modality} shows {second_class} lung cancer demonstrating smaller primary tumor size (<3cm), localized growth, and no distant metastasis",
-                            f"{context_prefix}{current_modality} shows {second_class} lung adenocarcinoma or squamous cell carcinoma with well-differentiated histology, early T-stage, and moderate metabolic activity (SUV 1.5-2.5)",
-                            f"{context_prefix}{current_modality} shows {second_class} lung tumor with mild to moderate FDG uptake, smooth well-defined margins, and no pleural invasion",
-                            f"{context_prefix}{current_modality} shows {second_class} lung cancer pathology with localized growth pattern, no significant lymphadenopathy, and low-grade histology",
-                            f"{context_prefix}{current_modality} shows {second_class} lung cancer with low-grade features: smaller mass (<3cm), smooth well-defined borders, no cavitation, and less aggressive appearance on FDG-PET",
-                            f"{context_prefix}{current_modality} shows {second_class} early-stage lung cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
-                            f"{context_prefix}{current_modality} shows {second_class} lung cancer with focal FDG-avid disease, single pulmonary nodule, and no extrapulmonary spread",
-                        ]
-                    else:
-                        # Original prompts without context - enhanced with medical imaging terminology
-                        first_prompts = [
-                            f"a lung CT or PET scan showing {first_class} non-small cell lung cancer (NSCLC) with aggressive tumor characteristics, high SUVmax, and advanced staging",
-                            f"a lung imaging scan with {first_class} lung cancer demonstrating large primary tumor (>3cm), lymph node metastasis, and invasive growth pattern",
-                            f"a lung CT or PET slice classified as {first_class} with poor differentiation, advanced T-stage (T3-T4), and high metabolic activity on FDG-PET",
-                            f"a lung cancer scan showing {first_class} tumor with intense FDG uptake (SUV >2.5), irregular spiculated margins, and pleural invasion",
-                            f"a lung radiology image with {first_class} lung cancer pathology showing invasive growth pattern, mediastinal lymphadenopathy, and high-grade histology",
-                            f"a lung scan with {first_class} lung cancer exhibiting high-grade features: large mass (>5cm), irregular spiculated borders, cavitation, and aggressive appearance",
-                            f"a medical lung image showing {first_class} advanced stage lung cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
-                            f"a lung CT or PET scan demonstrating {first_class} lung cancer with extensive FDG-avid disease, multiple pulmonary nodules, and extrapulmonary spread",
-                        ]
-                        second_prompts = [
-                            f"a lung CT or PET scan showing {second_class} non-small cell lung cancer (NSCLC) with less aggressive tumor characteristics, moderate SUVmax, and early staging",
-                            f"a lung imaging scan with {second_class} lung cancer demonstrating smaller primary tumor (<3cm), localized growth, and no distant metastasis",
-                            f"a lung CT or PET slice classified as {second_class} with well-differentiated histology, early T-stage (T1-T2), and moderate metabolic activity on FDG-PET",
-                            f"a lung cancer scan showing {second_class} tumor with mild to moderate FDG uptake (SUV 1.5-2.5), smooth well-defined margins, and no pleural invasion",
-                            f"a lung radiology image with {second_class} lung cancer pathology showing localized growth pattern, no significant lymphadenopathy, and low-grade histology",
-                            f"a lung scan with {second_class} lung cancer exhibiting low-grade features: smaller mass (<3cm), smooth well-defined borders, no cavitation, and less aggressive appearance",
-                            f"a medical lung image showing {second_class} early-stage lung cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
-                            f"a lung CT or PET scan demonstrating {second_class} lung cancer with focal FDG-avid disease, single pulmonary nodule, and no extrapulmonary spread",
-                        ]
-                else:
-                    # Low-grade first, high-grade second (swap the descriptions)
-                    if context_prefix:
-                        # Context-aware prompts with previous modality context - improved medical terminology
-                        first_prompts = [
-                            f"{context_prefix}{current_modality} shows {first_class} non-small cell lung cancer (NSCLC) with less aggressive tumor characteristics and moderate SUVmax values",
-                            f"{context_prefix}{current_modality} shows {first_class} lung cancer demonstrating smaller primary tumor size (<3cm), localized growth, and no distant metastasis",
-                            f"{context_prefix}{current_modality} shows {first_class} lung adenocarcinoma or squamous cell carcinoma with well-differentiated histology, early T-stage, and moderate metabolic activity (SUV 1.5-2.5)",
-                            f"{context_prefix}{current_modality} shows {first_class} lung tumor with mild to moderate FDG uptake, smooth well-defined margins, and no pleural invasion",
-                            f"{context_prefix}{current_modality} shows {first_class} lung cancer pathology with localized growth pattern, no significant lymphadenopathy, and low-grade histology",
-                            f"{context_prefix}{current_modality} shows {first_class} lung cancer with low-grade features: smaller mass (<3cm), smooth well-defined borders, no cavitation, and less aggressive appearance on FDG-PET",
-                            f"{context_prefix}{current_modality} shows {first_class} early-stage lung cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
-                            f"{context_prefix}{current_modality} shows {first_class} lung cancer with focal FDG-avid disease, single pulmonary nodule, and no extrapulmonary spread",
-                        ]
-                        second_prompts = [
-                            f"{context_prefix}{current_modality} shows {second_class} non-small cell lung cancer (NSCLC) with aggressive tumor characteristics and high SUVmax values",
-                            f"{context_prefix}{current_modality} shows {second_class} lung cancer demonstrating large primary tumor size (>3cm), lymph node invasion, and distant metastasis",
-                            f"{context_prefix}{current_modality} shows {second_class} lung adenocarcinoma or squamous cell carcinoma with poor differentiation, advanced T-stage, and high metabolic activity (SUV >2.5)",
-                            f"{context_prefix}{current_modality} shows {second_class} lung tumor with intense FDG uptake, irregular spiculated margins, and pleural invasion",
-                            f"{context_prefix}{current_modality} shows {second_class} lung cancer pathology with invasive growth pattern, mediastinal lymphadenopathy, and high-grade histology",
-                            f"{context_prefix}{current_modality} shows {second_class} lung cancer with high-grade features: large mass (>5cm), irregular spiculated borders, cavitation, and aggressive appearance on FDG-PET",
-                            f"{context_prefix}{current_modality} shows {second_class} advanced stage lung cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
-                            f"{context_prefix}{current_modality} shows {second_class} lung cancer with extensive FDG-avid disease, multiple pulmonary nodules, and extrapulmonary spread",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer with less aggressive tumor characteristics and moderate metabolic activity",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer demonstrating smaller primary tumor size (<3cm), localized growth, and no distant metastasis",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer with well-differentiated histology, early staging, and moderate metabolic activity",
+                            f"{context_prefix}{current_modality} shows {second_class} tumor with mild to moderate metabolic uptake, smooth well-defined margins, and no invasion",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer pathology with localized growth pattern, no significant lymphadenopathy, and low-grade histology",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer with low-grade features: smaller mass (<3cm), smooth well-defined borders, and less aggressive appearance",
+                            f"{context_prefix}{current_modality} shows {second_class} early-stage cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer with focal disease, single lesion, and no spread",
                         ]
                     else:
                         # Original prompts without context
                         first_prompts = [
-                            f"a lung CT or PET scan showing {first_class} lung cancer with aggressive tumor characteristics",
-                            f"a lung imaging scan with {first_class} lung cancer demonstrating smaller tumor size and localized growth",
-                            f"a lung CT or PET slice classified as {first_class} with well-differentiated and early stage features",
-                            f"a lung cancer scan showing {first_class} tumor with lower metabolic activity and contained growth",
-                            f"a lung radiology image with {first_class} lung cancer pathology showing localized growth pattern",
-                            f"a lung scan with {first_class} lung cancer exhibiting low-grade features: smaller mass, well-defined borders, and less aggressive appearance",
-                            f"a medical lung image showing {first_class} lung cancer with early-stage disease characteristics",
-                            f"a lung CT or PET scan demonstrating {first_class} lung cancer with limited tumor involvement",
+                            f"a {current_modality} scan showing {first_class} cancer with aggressive tumor characteristics and high metabolic activity",
+                            f"a {current_modality} imaging scan with {first_class} cancer demonstrating large primary tumor (>3cm), lymph node metastasis, and invasive growth pattern",
+                            f"a {current_modality} slice classified as {first_class} with poor differentiation, advanced staging, and high metabolic activity",
+                            f"a cancer scan showing {first_class} tumor with intense metabolic uptake, irregular margins, and invasion",
+                            f"a radiology image with {first_class} cancer pathology showing invasive growth pattern, lymphadenopathy, and high-grade histology",
+                            f"a {current_modality} scan with {first_class} cancer exhibiting high-grade features: large mass (>5cm), irregular borders, and aggressive appearance",
+                            f"a medical image showing {first_class} advanced stage cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
+                            f"a {current_modality} scan demonstrating {first_class} cancer with extensive disease, multiple lesions, and spread",
+                        ]
+                        second_prompts = [
+                            f"a {current_modality} scan showing {second_class} cancer with less aggressive tumor characteristics, moderate metabolic activity, and early staging",
+                            f"a {current_modality} imaging scan with {second_class} cancer demonstrating smaller primary tumor (<3cm), localized growth, and no distant metastasis",
+                            f"a {current_modality} slice classified as {second_class} with well-differentiated histology, early staging, and moderate metabolic activity",
+                            f"a cancer scan showing {second_class} tumor with mild to moderate metabolic uptake, smooth well-defined margins, and no invasion",
+                            f"a radiology image with {second_class} cancer pathology showing localized growth pattern, no significant lymphadenopathy, and low-grade histology",
+                            f"a {current_modality} scan with {second_class} cancer exhibiting low-grade features: smaller mass (<3cm), smooth well-defined borders, and less aggressive appearance",
+                            f"a medical image showing {second_class} early-stage cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
+                            f"a {current_modality} scan demonstrating {second_class} cancer with focal disease, single lesion, and no spread",
+                        ]
+                else:
+                    # Low-grade first, high-grade second (swap the descriptions)
+                    if context_prefix:
+                        # Context-aware prompts with previous modality context
+                        first_prompts = [
+                            f"{context_prefix}{current_modality} shows {first_class} cancer with less aggressive tumor characteristics and moderate metabolic activity",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer demonstrating smaller primary tumor size (<3cm), localized growth, and no distant metastasis",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer with well-differentiated histology, early staging, and moderate metabolic activity",
+                            f"{context_prefix}{current_modality} shows {first_class} tumor with mild to moderate metabolic uptake, smooth well-defined margins, and no invasion",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer pathology with localized growth pattern, no significant lymphadenopathy, and low-grade histology",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer with low-grade features: smaller mass (<3cm), smooth well-defined borders, and less aggressive appearance",
+                            f"{context_prefix}{current_modality} shows {first_class} early-stage cancer (Stage I-II) with limited tumor involvement, lower metabolic burden, and better prognosis",
+                            f"{context_prefix}{current_modality} shows {first_class} cancer with focal disease, single lesion, and no spread",
+                        ]
+                        second_prompts = [
+                            f"{context_prefix}{current_modality} shows {second_class} cancer with aggressive tumor characteristics and high metabolic activity",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer demonstrating large primary tumor size (>3cm), lymph node invasion, and distant metastasis",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer with poor differentiation, advanced staging, and high metabolic activity",
+                            f"{context_prefix}{current_modality} shows {second_class} tumor with intense metabolic uptake, irregular margins, and invasion",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer pathology with invasive growth pattern, lymphadenopathy, and high-grade histology",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer with high-grade features: large mass (>5cm), irregular borders, and aggressive appearance",
+                            f"{context_prefix}{current_modality} shows {second_class} advanced stage cancer (Stage III-IV) with extensive tumor involvement, high metabolic burden, and poor prognosis",
+                            f"{context_prefix}{current_modality} shows {second_class} cancer with extensive disease, multiple lesions, and spread",
+                        ]
+                    else:
+                        # Original prompts without context
+                        first_prompts = [
+                            f"a {current_modality} scan showing {first_class} cancer with less aggressive tumor characteristics",
+                            f"a {current_modality} imaging scan with {first_class} cancer demonstrating smaller tumor size and localized growth",
+                            f"a {current_modality} slice classified as {first_class} with well-differentiated and early stage features",
+                            f"a cancer scan showing {first_class} tumor with lower metabolic activity and contained growth",
+                            f"a radiology image with {first_class} cancer pathology showing localized growth pattern",
+                            f"a {current_modality} scan with {first_class} cancer exhibiting low-grade features: smaller mass, well-defined borders, and less aggressive appearance",
+                            f"a medical image showing {first_class} cancer with early-stage disease characteristics",
+                            f"a {current_modality} scan demonstrating {first_class} cancer with limited tumor involvement",
                 ]
                 second_prompts = [
-                            f"a lung CT or PET scan showing {second_class} lung cancer with aggressive tumor characteristics",
-                            f"a lung imaging scan with {second_class} lung cancer demonstrating large tumor size and invasion",
-                            f"a lung CT or PET slice classified as {second_class} with poor differentiation and advanced stage",
-                            f"a lung cancer scan showing {second_class} tumor with high metabolic activity and spread",
-                            f"a lung radiology image with {second_class} lung cancer pathology showing invasive growth pattern",
-                            f"a lung scan with {second_class} lung cancer exhibiting high-grade features: large mass, irregular borders, and aggressive appearance",
-                            f"a medical lung image showing {second_class} lung cancer with advanced disease characteristics",
-                            f"a lung CT or PET scan demonstrating {second_class} lung cancer with extensive tumor involvement",
+                            f"a {current_modality} scan showing {second_class} cancer with aggressive tumor characteristics",
+                            f"a {current_modality} imaging scan with {second_class} cancer demonstrating large tumor size and invasion",
+                            f"a {current_modality} slice classified as {second_class} with poor differentiation and advanced stage",
+                            f"a cancer scan showing {second_class} tumor with high metabolic activity and spread",
+                            f"a radiology image with {second_class} cancer pathology showing invasive growth pattern",
+                            f"a {current_modality} scan with {second_class} cancer exhibiting high-grade features: large mass, irregular borders, and aggressive appearance",
+                            f"a medical image showing {second_class} cancer with advanced disease characteristics",
+                            f"a {current_modality} scan demonstrating {second_class} cancer with extensive tumor involvement",
                 ]
             else:
                 # Generic medical imaging prompts
@@ -685,7 +685,7 @@ class MultimodalModelWrapper:
                     f"{context_prefix}a diagnostic slice that is representative of {second_class}",
                 ]
             # Weight prompts: more specific medical terminology gets higher weight
-            if is_lung_cancer_grading:
+            if is_cancer_grading:
                 # Higher weight for prompts with specific medical terms (aggressive, invasion, differentiation, etc.)
                 prompt_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.0, 1.0]  # 6th prompt has more detail
             else:

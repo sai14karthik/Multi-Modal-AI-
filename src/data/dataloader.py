@@ -45,7 +45,8 @@ def get_all_images_by_modality(
     modality: str,
     classes: Optional[List[str]] = None,
     dataset_config_path: Optional[str] = None,
-    split: Optional[str] = None
+    split: Optional[str] = None,
+    slice_stride: Optional[int] = None
 ) -> List[Dict]:
     """
     Get ALL images from a specific modality folder, honoring dataset_config metadata.

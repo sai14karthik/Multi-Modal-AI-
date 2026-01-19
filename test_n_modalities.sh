@@ -1,21 +1,39 @@
 #!/bin/bash
 # Test N-modality cascading context on sample data locally
-# Usage: ./test_n_modalities.sh
+# Usage: ./test_n_modalities.sh [MODALITY1] [MODALITY2] ...
+# Example: ./test_n_modalities.sh CT PET
+#          ./test_n_modalities.sh MRI XRay
+
+# Get modalities from command line or use default
+if [ $# -ge 2 ]; then
+    MODALITIES=("$@")
+else
+    # Default: CT PET (for backward compatibility)
+    MODALITIES=("CT" "PET")
+fi
+
+MOD1="${MODALITIES[0]}"
+MOD2="${MODALITIES[1]}"
+MOD_SUFFIX_FORWARD=$(IFS='_'; echo "${MODALITIES[*]}")
+MOD_SUFFIX_REVERSE=$(IFS='_'; echo "${MODALITIES[*]}" | awk '{for(i=NF;i>0;i--) printf "%s%s", $i, (i>1?"_":"")}')
 
 echo "=========================================="
 echo "Testing N-Modality Cascading Context"
 echo "=========================================="
+echo "Modalities: ${MODALITIES[*]}"
+echo "Forward order: ${MOD_SUFFIX_FORWARD}"
+echo "Reverse order: ${MOD_SUFFIX_REVERSE}"
 echo ""
 
 # Test with small sample size
 MAX_SAMPLES=3
 
-# Test 1: 2 modalities (CT → PET) - backward compatibility
-echo "Test 1: 2 Modalities (CT → PET)"
+# Test 1: Forward order (Mod1 → Mod2)
+echo "Test 1: Forward Order (${MOD1} → ${MOD2})"
 echo "=========================================="
 python3 -m src.main \
     --data_root data \
-    --modalities CT PET \
+    --modalities "${MODALITIES[@]}" \
     --model_arch clip \
     --model_name openai/clip-vit-base-patch32 \
     --output_dir results \
@@ -24,16 +42,16 @@ python3 -m src.main \
     --dataset_config data/dataset_config.yaml \
     --class_names high_grade low_grade \
     --temperature 0.8 \
-    --split test 2>&1 | tee test_2mod.log
+    --split test 2>&1 | tee test_forward.log
 
 TEST1_EXIT=$?
 
 echo ""
-echo "Test 2: 2 Modalities Reversed (PET → CT)"
+echo "Test 2: Reverse Order (${MOD2} → ${MOD1})"
 echo "=========================================="
 python3 -m src.main \
     --data_root data \
-    --modalities CT PET \
+    --modalities "${MODALITIES[@]}" \
     --reverse_order \
     --model_arch clip \
     --model_name openai/clip-vit-base-patch32 \
@@ -43,7 +61,7 @@ python3 -m src.main \
     --dataset_config data/dataset_config.yaml \
     --class_names high_grade low_grade \
     --temperature 0.8 \
-    --split test 2>&1 | tee test_2mod_reversed.log
+    --split test 2>&1 | tee test_reverse.log
 
 TEST2_EXIT=$?
 
@@ -54,21 +72,21 @@ echo "=========================================="
 echo ""
 
 if [ $TEST1_EXIT -eq 0 ]; then
-    echo "2 Modalities (CT→PET): PASSED"
-    if ls results/results_*_CT_PET.json 1> /dev/null 2>&1; then
-        echo "   Results: $(ls results/results_*_CT_PET.json | head -1)"
+    echo "Forward Order (${MOD1}→${MOD2}): PASSED"
+    if ls results/results_*_${MOD_SUFFIX_FORWARD}.json 1> /dev/null 2>&1; then
+        echo "   Results: $(ls results/results_*_${MOD_SUFFIX_FORWARD}.json | head -1)"
     fi
 else
-    echo "ERROR: 2 Modalities (CT→PET): FAILED (exit code: $TEST1_EXIT)"
+    echo "ERROR: Forward Order (${MOD1}→${MOD2}): FAILED (exit code: $TEST1_EXIT)"
 fi
 
 if [ $TEST2_EXIT -eq 0 ]; then
-    echo "2 Modalities Reversed (PET→CT): PASSED"
-    if ls results/results_*_PET_CT.json 1> /dev/null 2>&1; then
-        echo "   Results: $(ls results/results_*_PET_CT.json | head -1)"
+    echo "Reverse Order (${MOD2}→${MOD1}): PASSED"
+    if ls results/results_*_${MOD_SUFFIX_REVERSE}.json 1> /dev/null 2>&1; then
+        echo "   Results: $(ls results/results_*_${MOD_SUFFIX_REVERSE}.json | head -1)"
     fi
 else
-    echo "ERROR: 2 Modalities Reversed (PET→CT): FAILED (exit code: $TEST2_EXIT)"
+    echo "ERROR: Reverse Order (${MOD2}→${MOD1}): FAILED (exit code: $TEST2_EXIT)"
 fi
 
 echo ""
@@ -76,12 +94,12 @@ if [ $TEST1_EXIT -eq 0 ] && [ $TEST2_EXIT -eq 0 ]; then
     echo "All tests passed!"
     echo ""
     echo "Check logs:"
-    echo "  - CT→PET: test_2mod.log"
-    echo "  - PET→CT: test_2mod_reversed.log"
+    echo "  - Forward: test_forward.log"
+    echo "  - Reverse: test_reverse.log"
     echo ""
     echo "Check results:"
-    echo "  - CT→PET: results/results_*_CT_PET.json"
-    echo "  - PET→CT: results/results_*_PET_CT.json"
+    echo "  - Forward: results/results_*_${MOD_SUFFIX_FORWARD}.json"
+    echo "  - Reverse: results/results_*_${MOD_SUFFIX_REVERSE}.json"
 else
     echo "ERROR: Some tests failed. Check logs above."
     exit 1
