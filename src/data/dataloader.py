@@ -15,7 +15,7 @@ from src.data.config import load_dataset_config, resolve_metadata_path
 
 
 def _extract_image_number(filename):
-    """Extract number from filename like 'ct_healthy (123).jpg' -> 123"""
+    """Extract number from filename like 'image_class0 (123).jpg' -> 123"""
     match = re.search(r'\((\d+)\)', filename)
     if match:
         return int(match.group(1))
@@ -67,7 +67,7 @@ def get_all_images_by_modality(
     class_mapping = modality_cfg.get('classes', {})
 
     if classes is None:
-        classes = list(class_mapping.keys()) if class_mapping else ['Healthy', 'Tumor']
+        classes = list(class_mapping.keys()) if class_mapping else ['Class0', 'Class1']
 
     # Ensure labels exist for classes encountered
     class_to_label = {cls: class_mapping.get(cls, idx) for idx, cls in enumerate(classes)}

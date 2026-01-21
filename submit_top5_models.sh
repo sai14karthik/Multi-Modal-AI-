@@ -29,7 +29,13 @@ fi
 MOD1="${MODALITIES[0]}"
 MOD2="${MODALITIES[1]}"
 MOD_SUFFIX_FORWARD=$(IFS='_'; echo "${MODALITIES[*]}")
-MOD_SUFFIX_REVERSE=$(IFS='_'; echo "${MODALITIES[*]}" | awk '{for(i=NF;i>0;i--) printf "%s%s", $i, (i>1?"_":"")}')
+
+# Build reversed modalities array for display
+REVERSED_MODALITIES_DISPLAY=()
+for ((i=${#MODALITIES[@]}-1; i>=0; i--)); do
+    REVERSED_MODALITIES_DISPLAY+=("${MODALITIES[i]}")
+done
+MOD_SUFFIX_REVERSE=$(IFS='_'; echo "${REVERSED_MODALITIES_DISPLAY[*]}")
 
 echo "Submitting top 5 models..."
 echo "Modalities: ${MODALITIES[*]}"
@@ -57,7 +63,7 @@ JOB_IDS=()
 for model_config in "${MODELS[@]}"; do
     IFS=':' read -r model_name model_arch job_name <<< "$model_config"
     
-    echo "Submitting: $job_name (both orders in single job)"
+    echo "Submitting: $job_name"
     
     # Submit single job with both orders
     JOB_SCRIPT="submit_${job_name}_both_orders_tmp.sh"
@@ -178,11 +184,11 @@ EOF
     JOB_ID=$(sbatch "$JOB_SCRIPT" | awk '{print $4}')
     rm -f "$JOB_SCRIPT"
     JOB_IDS+=("$JOB_ID")
-    echo "    Job $JOB_ID submitted (both orders)"
+    echo "    Job $JOB_ID submitted"
     echo ""
 done
 
-echo "Submitted ${#JOB_IDS[@]} jobs (${#MODELS[@]} models, each handling both orders)"
+echo "Submitted ${#JOB_IDS[@]} jobs (${#MODELS[@]} models)"
 echo ""
 echo "Monitor: squeue -u \$USER"
 echo "Logs: tail -f output_*_*.log"

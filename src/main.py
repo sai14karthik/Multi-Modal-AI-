@@ -398,7 +398,8 @@ def main():
                 class_names = [name for name, _ in sorted_classes]
                 break
         if class_names is None:
-            class_names = ['Healthy', 'Tumor']
+            # Generic fallback: use Class0 and Class1 if no classes found in config
+            class_names = ['Class0', 'Class1']
     args.class_names = class_names
     
     # Set device
@@ -595,11 +596,11 @@ def main():
         
             if case_id not in results:
                 results[case_id] = []
-        
+            
             try:
                 # Smart loader: handles both regular images and DICOM files
                 img = load_image_smart(img_info['image_path'])
-            
+                
                 prediction = model.predict(
                 images={current_mod: img},
                 available_modalities=[current_mod],

@@ -41,7 +41,7 @@ class LLaVAMedRunner:
         hf_token: Optional[str] = None,
     ):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.class_names = class_names or ["high_grade", "low_grade"]
+        self.class_names = class_names or ["Class0", "Class1"]
         self.compute_dtype = torch.float16 if self.device.startswith("cuda") else torch.float32
         if len(self.class_names) != 2:
             raise ValueError("LLaVAMedRunner currently supports exactly two classes.")
@@ -82,7 +82,7 @@ class LLaVAMedRunner:
 
         print("Model loaded successfully!\n")
 
-    def _build_prompt(self, previous_predictions: Optional[Dict[str, Dict]] = None) -> str:
+    def _build_prompt(self, previous_predictions: Optional[Dict[str, Dict]] = None, current_modality: Optional[str] = None) -> str:
         first, second = self.class_names
         
         # Build context string if previous predictions are available
@@ -97,7 +97,13 @@ class LLaVAMedRunner:
             context_str = ", and ".join(context_parts)
             context_prefix = f"Given that {context_str}, "
         
-        # Detect if this is lung cancer grading
+        # Determine current modality name for prompts (default to generic if not provided)
+        if current_modality is None:
+            modality_description = "medical imaging scan"
+        else:
+            modality_description = f"{current_modality} scan"
+        
+        # Detect if this is cancer grading (generic for any cancer type)
         is_grading = any(
             keyword in first.lower() + second.lower()
             for keyword in ["high_grade", "low_grade", "grade"]
@@ -105,21 +111,21 @@ class LLaVAMedRunner:
         
         if is_grading:
             return (
-                f"{context_prefix}You are a medical imaging expert specializing in lung cancer. "
-                "Given this lung CT or PET scan slice, determine whether the lung cancer grade is "
+                f"{context_prefix}You are a medical imaging expert specializing in cancer diagnosis. "
+                f"Given this {modality_description} slice, determine whether the cancer grade is "
                 f"{first} or {second}. Respond with exactly one word: {first} or {second}."
             )
         else:
             return (
                 f"{context_prefix}You are a medical imaging expert. "
-                "Given this lung CT or PET scan slice, determine whether it shows "
+                f"Given this {modality_description} slice, determine whether it shows "
                 f"{first} or {second}. Respond with exactly one word: {first} or {second}."
             )
 
     @torch.inference_mode()
-    def _predict_single(self, image: Image.Image, previous_predictions: Optional[Dict[str, Dict]] = None) -> Dict:
+    def _predict_single(self, image: Image.Image, previous_predictions: Optional[Dict[str, Dict]] = None, current_modality: Optional[str] = None) -> Dict:
         conv = self.conv_template.copy()
-        conv.append_message(conv.roles[0], self._build_prompt(previous_predictions=previous_predictions))
+        conv.append_message(conv.roles[0], self._build_prompt(previous_predictions=previous_predictions, current_modality=current_modality))
         conv.append_message(conv.roles[1], None)
         prompt = conv.get_prompt()
 
@@ -245,7 +251,8 @@ class LLaVAMedRunner:
         elif second in output_text:
             prediction = 1
         else:
-            prediction = 0 if "high" in output_text else 1
+            # Fallback: default to first class if no match found
+            prediction = 0
 
         # Ensure prediction is valid (0 or 1)
         prediction = max(0, min(1, int(prediction)))
@@ -471,7 +478,7 @@ class LLaVAMedRunner:
         
         Args:
             previous_predictions: Optional dict mapping modality names to their predictions.
-                Format: {'CT': {'prediction': 0, 'class_name': 'high_grade'}, ...}
+                Format: {'CT': {'prediction': 0, 'class_name': 'class0'}, ...}
                 If provided, prompts will incorporate this context.
         """
         if not images:
@@ -482,5 +489,5 @@ class LLaVAMedRunner:
         if isinstance(image, list):
             image = image[0]
         
-        return self._predict_single(image, previous_predictions=previous_predictions)
+        return self._predict_single(image, previous_predictions=previous_predictions, current_modality=primary_modality)
 

@@ -3,13 +3,16 @@
 Convert DICOM files to PNG images for consistency or performance.
 
 This script:
-1. Reads DICOM files from the organized CMB-AML dataset
+1. Reads DICOM files from any organized dataset
 2. Converts them to PNG images using the same logic as load_dicom_image()
 3. Saves PNG files in the same structure
 4. Preserves patient IDs and class organization
 
+Note: This conversion is OPTIONAL - the codebase handles DICOM files directly.
+      Use this script only if you specifically need PNG format.
+
 Usage:
-    python3 convert_dicom_to_png.py [--output_dir OUTPUT_DIR]
+    python3 convert_dicom_to_png.py --input_dir <dataset_path> [--output_dir OUTPUT_DIR]
 """
 
 import os

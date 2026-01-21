@@ -1,7 +1,8 @@
 """
 Dataset configuration helpers.
 
-Supports legacy brain tumor dataset (default) and custom configs supplied via YAML.
+Supports custom configs supplied via YAML.
+If no config is provided, returns a minimal generic config.
 """
 
 from __future__ import annotations
@@ -14,20 +15,20 @@ import yaml
 
 
 DEFAULT_CONFIG: Dict = {
-    "dataset_name": "BrainTumor",
+    "dataset_name": "GenericDataset",
     "modalities": {
-        "CT": {
-            "folder": "Brain Tumor CT scan Images",
+        "Mod1": {
+            "folder": "Mod1",
             "classes": {
-                "Healthy": 0,
-                "Tumor": 1,
+                "Class0": 0,
+                "Class1": 1,
             },
         },
-        "MRI": {
-            "folder": "Brain Tumor MRI images",
+        "Mod2": {
+            "folder": "Mod2",
             "classes": {
-                "Healthy": 0,
-                "Tumor": 1,
+                "Class0": 0,
+                "Class1": 1,
             },
         },
     },

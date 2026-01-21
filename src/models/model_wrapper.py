@@ -67,10 +67,11 @@ class MultimodalModelWrapper:
         self.model_name = model_name
         self.is_biomedclip = "biomedclip" in model_name.lower() or "biomed" in model_name.lower()
         self.is_siglip = "siglip" in model_name.lower()
-        self.class_names = class_names or ["Healthy", "Tumor"]
+        self.class_names = class_names or ["Class0", "Class1"]
         if len(self.class_names) != 2:
             raise ValueError("MultimodalModelWrapper currently supports exactly two classes.")
         self.class_names = [name.strip() for name in self.class_names]
+        # Check if using default healthy/tumor classes for backward compatibility with prompt generation
         self._default_classes = {name.lower() for name in self.class_names} == {"healthy", "tumor"}
         
         # Get token from parameter or environment variable
@@ -519,14 +520,14 @@ class MultimodalModelWrapper:
             context_prefix = f"Given that {context_str}, this {current_modality} shows "
 
         if self._default_classes:
-            # Strategy 1: Direct descriptive prompts (generic medical imaging)
-            healthy_direct = [
+            # Strategy 1: Direct descriptive prompts (for backward compatibility with "Healthy" vs "Tumor" classes)
+            class0_direct = [
                 f"a medical {current_modality} showing healthy normal tissue with no tumors or abnormalities",
                 f"a {current_modality} imaging scan with normal anatomy and no pathological findings",
                 f"a healthy medical image showing normal tissue structure without disease",
                 f"a normal {current_modality} scan image with no masses, lesions, or tumors visible"
             ]
-            tumor_direct = [
+            class1_direct = [
                 f"a medical {current_modality} showing a visible tumor or malignant mass",
                 f"a {current_modality} imaging scan with abnormal mass, tumor growth, or cancerous lesion",
                 f"a medical image showing pathology, tumor, or abnormal tissue",
@@ -534,32 +535,32 @@ class MultimodalModelWrapper:
             ]
             
             # Strategy 2: Clinical terminology (generic)
-            healthy_clinical = [
+            class0_clinical = [
                 f"a {current_modality} scan with normal tissue and no abnormal findings",
                 f"a medical image showing normal anatomy without pathology",
                 f"a {current_modality} scan demonstrating normal tissue architecture"
             ]
-            tumor_clinical = [
+            class1_clinical = [
                 f"a {current_modality} scan with an abnormal mass or neoplasm",
                 f"a medical image showing an abnormal lesion or tumor",
                 f"a {current_modality} scan demonstrating pathological tissue or mass"
             ]
             
             # Strategy 3: Simple, clear descriptions (generic)
-            healthy_simple = [
+            class0_simple = [
                 f"a normal healthy {current_modality} scan",
                 f"a {current_modality} scan with no tumor",
                 f"a healthy medical image"
             ]
-            tumor_simple = [
+            class1_simple = [
                 f"a {current_modality} scan with a tumor",
                 f"a {current_modality} scan showing a tumor",
                 f"an abnormal {current_modality} scan with tumor"
             ]
             
-            first_prompts = healthy_direct + healthy_clinical + healthy_simple
-            second_prompts = tumor_direct + tumor_clinical + tumor_simple
-            prompt_weights = [1.0] * len(healthy_direct) + [0.8] * len(healthy_clinical) + [0.6] * len(healthy_simple)
+            first_prompts = class0_direct + class0_clinical + class0_simple
+            second_prompts = class1_direct + class1_clinical + class1_simple
+            prompt_weights = [1.0] * len(class0_direct) + [0.8] * len(class0_clinical) + [0.6] * len(class0_simple)
             
             # Apply context prefix if available
             if context_prefix:
@@ -660,8 +661,8 @@ class MultimodalModelWrapper:
                             f"a {current_modality} scan with {first_class} cancer exhibiting low-grade features: smaller mass, well-defined borders, and less aggressive appearance",
                             f"a medical image showing {first_class} cancer with early-stage disease characteristics",
                             f"a {current_modality} scan demonstrating {first_class} cancer with limited tumor involvement",
-                ]
-                second_prompts = [
+                        ]
+                        second_prompts = [
                             f"a {current_modality} scan showing {second_class} cancer with aggressive tumor characteristics",
                             f"a {current_modality} imaging scan with {second_class} cancer demonstrating large tumor size and invasion",
                             f"a {current_modality} slice classified as {second_class} with poor differentiation and advanced stage",
@@ -670,7 +671,7 @@ class MultimodalModelWrapper:
                             f"a {current_modality} scan with {second_class} cancer exhibiting high-grade features: large mass, irregular borders, and aggressive appearance",
                             f"a medical image showing {second_class} cancer with advanced disease characteristics",
                             f"a {current_modality} scan demonstrating {second_class} cancer with extensive tumor involvement",
-                ]
+                        ]
             else:
                 # Generic medical imaging prompts
                 context_hint = "medical"
@@ -744,24 +745,24 @@ class MultimodalModelWrapper:
             image = Image.blend(image, equalized_rgb, 0.4)
         else:
             # Standard preprocessing (balanced)
-        # Enhance contrast for medical images
+            # Enhance contrast for medical images
             enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.3)  # Increase contrast by 30%
-        # Enhance sharpness slightly
-        enhancer = ImageEnhance.Sharpness(image)
-        image = enhancer.enhance(1.1)
-        
-        # Apply histogram equalization for better visibility
-        # Convert to grayscale for histogram equalization
-        gray = np.array(image.convert('L'))
-        # Apply histogram equalization
-        equalized = ImageOps.equalize(Image.fromarray(gray))
-        # Convert back to RGB
-        equalized_rgb = Image.new('RGB', equalized.size)
-        equalized_rgb.paste(equalized)
-        
-        # Blend original (70%) with equalized (30%) to preserve natural look
-        image = Image.blend(image, equalized_rgb, 0.3)
+            image = enhancer.enhance(1.3)  # Increase contrast by 30%
+            # Enhance sharpness slightly
+            enhancer = ImageEnhance.Sharpness(image)
+            image = enhancer.enhance(1.1)
+            
+            # Apply histogram equalization for better visibility
+            # Convert to grayscale for histogram equalization
+            gray = np.array(image.convert('L'))
+            # Apply histogram equalization
+            equalized = ImageOps.equalize(Image.fromarray(gray))
+            # Convert back to RGB
+            equalized_rgb = Image.new('RGB', equalized.size)
+            equalized_rgb.paste(equalized)
+            
+            # Blend original (70%) with equalized (30%) to preserve natural look
+            image = Image.blend(image, equalized_rgb, 0.3)
         
         return image
     
@@ -793,7 +794,7 @@ class MultimodalModelWrapper:
                 If provided, prompts will incorporate this context.
         
         Returns:
-            Dictionary with prediction (0=Healthy, 1=Tumor), confidence, and probabilities
+            Dictionary with prediction (0=class0, 1=class1), confidence, and probabilities
         """
         # Determine current modality being processed (for generic prompts)
         current_modality_name = available_modalities[0] if available_modalities else None
@@ -835,10 +836,10 @@ class MultimodalModelWrapper:
         if preprocess:
             available_images = [self._preprocess_medical_image(img, aggressive=aggressive_preprocess) for img in available_images]
         
-        all_healthy_logits_weighted = []
-        all_tumor_logits_weighted = []
-        all_healthy_logits_swapped = []
-        all_tumor_logits_swapped = []
+        all_class0_logits_weighted = []
+        all_class1_logits_weighted = []
+        all_class0_logits_swapped = []
+        all_class1_logits_swapped = []
         
         # Process in batches
         for i in range(0, len(available_images), batch_size):
@@ -869,46 +870,46 @@ class MultimodalModelWrapper:
                     logits_per_image = logits_per_image.unsqueeze(0)
                 
                 for j in range(len(batch_images)):
-                    # Get logits for healthy and tumor prompts
-                    # Prompts are interleaved: [healthy1, tumor1, healthy2, tumor2, ...]
-                    healthy_logits_all = logits_per_image[j][::2]  # All healthy prompt logits
-                    tumor_logits_all = logits_per_image[j][1::2]   # All tumor prompt logits
+                    # Get logits for class0 and class1 prompts
+                    # Prompts are interleaved: [class0_1, class1_1, class0_2, class1_2, ...]
+                    class0_logits_all = logits_per_image[j][::2]  # All class0 prompt logits
+                    class1_logits_all = logits_per_image[j][1::2]   # All class1 prompt logits
                     
                     if use_weighted_ensemble and hasattr(self, 'weights'):
                         # Weighted average based on prompt quality
-                        healthy_weights = torch.tensor(self.weights[::2], device=healthy_logits_all.device)
-                        tumor_weights = torch.tensor(self.weights[1::2], device=tumor_logits_all.device)
+                        class0_weights = torch.tensor(self.weights[::2], device=class0_logits_all.device)
+                        class1_weights = torch.tensor(self.weights[1::2], device=class1_logits_all.device)
                         # Protect against division by zero (weights should always be positive, but safety check)
-                        healthy_weights_sum = healthy_weights.sum()
-                        tumor_weights_sum = tumor_weights.sum()
-                        healthy_prompt_logits = (healthy_logits_all * healthy_weights).sum() / max(healthy_weights_sum, 1e-8)
-                        tumor_prompt_logits = (tumor_logits_all * tumor_weights).sum() / max(tumor_weights_sum, 1e-8)
+                        class0_weights_sum = class0_weights.sum()
+                        class1_weights_sum = class1_weights.sum()
+                        class0_prompt_logits = (class0_logits_all * class0_weights).sum() / max(class0_weights_sum, 1e-8)
+                        class1_prompt_logits = (class1_logits_all * class1_weights).sum() / max(class1_weights_sum, 1e-8)
                     else:
                         # Simple mean
-                        healthy_prompt_logits = healthy_logits_all.mean()
-                        tumor_prompt_logits = tumor_logits_all.mean()
+                        class0_prompt_logits = class0_logits_all.mean()
+                        class1_prompt_logits = class1_logits_all.mean()
                     
                     # Strategy 1: Direct (no swap)
-                    all_healthy_logits_weighted.append(healthy_prompt_logits)
-                    all_tumor_logits_weighted.append(tumor_prompt_logits)
+                    all_class0_logits_weighted.append(class0_prompt_logits)
+                    all_class1_logits_weighted.append(class1_prompt_logits)
                     
                     # Strategy 2: Swapped (original behavior)
-                    all_healthy_logits_swapped.append(tumor_prompt_logits)
-                    all_tumor_logits_swapped.append(healthy_prompt_logits)
+                    all_class0_logits_swapped.append(class1_prompt_logits)
+                    all_class1_logits_swapped.append(class0_prompt_logits)
         
         # Aggregate across images
-        if len(all_healthy_logits_weighted) == 0:
+        if len(all_class0_logits_weighted) == 0:
             raise ValueError("No logits computed. Check that images were processed correctly.")
-        elif len(all_healthy_logits_weighted) == 1:
-            healthy_logits_direct = all_healthy_logits_weighted[0]
-            tumor_logits_direct = all_tumor_logits_weighted[0]
-            healthy_logits_swap = all_healthy_logits_swapped[0]
-            tumor_logits_swap = all_tumor_logits_swapped[0]
+        elif len(all_class0_logits_weighted) == 1:
+            class0_logits_direct = all_class0_logits_weighted[0]
+            class1_logits_direct = all_class1_logits_weighted[0]
+            class0_logits_swap = all_class0_logits_swapped[0]
+            class1_logits_swap = all_class1_logits_swapped[0]
         else:
-            healthy_logits_direct = torch.stack(all_healthy_logits_weighted).mean()
-            tumor_logits_direct = torch.stack(all_tumor_logits_weighted).mean()
-            healthy_logits_swap = torch.stack(all_healthy_logits_swapped).mean()
-            tumor_logits_swap = torch.stack(all_tumor_logits_swapped).mean()
+            class0_logits_direct = torch.stack(all_class0_logits_weighted).mean()
+            class1_logits_direct = torch.stack(all_class1_logits_weighted).mean()
+            class0_logits_swap = torch.stack(all_class0_logits_swapped).mean()
+            class1_logits_swap = torch.stack(all_class1_logits_swapped).mean()
         
         # For BiomedCLIP, always try both strategies to handle potential logit order issues
         # BiomedCLIP may have inverted logit order, so we test both and pick the best
@@ -916,43 +917,43 @@ class MultimodalModelWrapper:
             # Try both strategies for BiomedCLIP and pick the one with higher confidence
             # Direct strategy
             safe_temperature = max(temperature, 1e-8)
-            class_logits_direct = torch.stack([healthy_logits_direct, tumor_logits_direct]) / safe_temperature
+            class_logits_direct = torch.stack([class0_logits_direct, class1_logits_direct]) / safe_temperature
             probs_direct = class_logits_direct.softmax(dim=-1)
             confidence_direct = probs_direct.max().item()
             
             # Swapped strategy (may be needed if logits are inverted)
-            class_logits_swap = torch.stack([healthy_logits_swap, tumor_logits_swap]) / safe_temperature
+            class_logits_swap = torch.stack([class0_logits_swap, class1_logits_swap]) / safe_temperature
             probs_swap = class_logits_swap.softmax(dim=-1)
             confidence_swap = probs_swap.max().item()
             
             # Use the strategy with higher confidence
             if confidence_swap > confidence_direct:
                 probs = probs_swap
-                healthy_logits = healthy_logits_swap
-                tumor_logits = tumor_logits_swap
+                class0_logits = class0_logits_swap
+                class1_logits = class1_logits_swap
             else:
                 probs = probs_direct
-                healthy_logits = healthy_logits_direct
-                tumor_logits = tumor_logits_direct
+                class0_logits = class0_logits_direct
+                class1_logits = class1_logits_direct
         elif not try_both_swaps:
             # Use direct strategy (no swap) - for models that don't need swap testing
             # Protect against division by zero
             safe_temperature = max(temperature, 1e-8)
-            class_logits = torch.stack([healthy_logits_direct, tumor_logits_direct]) / safe_temperature
+            class_logits = torch.stack([class0_logits_direct, class1_logits_direct]) / safe_temperature
             probs = class_logits.softmax(dim=-1)
-            healthy_logits = healthy_logits_direct
-            tumor_logits = tumor_logits_direct
+            class0_logits = class0_logits_direct
+            class1_logits = class1_logits_direct
         else:
             # Try both strategies and pick the one with higher confidence
             # Direct strategy
             # Protect against division by zero
             safe_temperature = max(temperature, 1e-8)
-            class_logits_direct = torch.stack([healthy_logits_direct, tumor_logits_direct]) / safe_temperature
+            class_logits_direct = torch.stack([class0_logits_direct, class1_logits_direct]) / safe_temperature
             probs_direct = class_logits_direct.softmax(dim=-1)
             confidence_direct = probs_direct.max().item()
             
             # Swapped strategy
-            class_logits_swap = torch.stack([healthy_logits_swap, tumor_logits_swap]) / safe_temperature
+            class_logits_swap = torch.stack([class0_logits_swap, class1_logits_swap]) / safe_temperature
             probs_swap = class_logits_swap.softmax(dim=-1)
             confidence_swap = probs_swap.max().item()
             
@@ -961,30 +962,27 @@ class MultimodalModelWrapper:
             # prefer the DIRECT strategy. Only swap if swap is STRICTLY more confident.
             if confidence_swap > confidence_direct:
                 probs = probs_swap
-                healthy_logits = healthy_logits_swap
-                tumor_logits = tumor_logits_swap
+                class0_logits = class0_logits_swap
+                class1_logits = class1_logits_swap
             else:
                 probs = probs_direct
-                healthy_logits = healthy_logits_direct
-                tumor_logits = tumor_logits_direct
+                class0_logits = class0_logits_direct
+                class1_logits = class1_logits_direct
         
         # Store probabilities BEFORE boosting (for certainty analysis)
         # For CT (no boosting), this will be the same as final probs
         # For PET (with boosting), this captures the state before boosting
         probs_before_boosting = probs.clone()
         
-        # Boost PET prediction using CT context (helps improve accuracy)
-        # PROFESSOR'S INSIGHT: "When PET is given to model, its CT is also given saying 
-        # 'hey CT gave this, what's for PET?'"
-        # 
-        # KEY CONCEPT: PET has MORE information than CT:
-        #   1. PET's own visual signal from the PET image
-        #   2. CT's prediction as context (incorporated in prompts: "Given that CT showed X...")
-        #   3. The model has ALREADY considered CT context when making PET's prediction
+        # Boost current modality prediction using previous modality context (helps improve accuracy)
+        # KEY CONCEPT: Current modality has MORE information than previous modality:
+        #   1. Current modality's own visual signal from its image
+        #   2. Previous modality's prediction as context (incorporated in prompts: "Given that {previous_mod} showed X...")
+        #   3. The model has ALREADY considered previous modality context when making current modality's prediction
         #
         # Therefore, current modality's prediction is INFORMED and should be trusted MORE than previous modality alone!
         # This is where improvement happens - current modality can use both its image AND previous modality context.
-        # Only apply boosting when we have previous modality context (e.g., processing PET with CT context, or CT with PET context)
+        # Only apply boosting when we have previous modality context (e.g., processing Mod2 with Mod1 context, or Mod1 with Mod2 context)
         if previous_mod_prediction_for_boosting is not None and previous_predictions:
             # We're processing current modality images with previous modality context from the SAME patient
             current_mod_prediction_before = probs.argmax().item()
@@ -1054,11 +1052,11 @@ class MultimodalModelWrapper:
         probs = probs / probs.sum()
         
         # This strategy enables improvement:
-            # 1. When PET agrees with CT: Massive boost locks in correct prediction
-            # 2. When PET disagrees with CT: Trust PET more (PET has more information)
-            #    - PET has its own image + CT context in prompts
-            #    - PET can correct CT when PET sees something CT missed
-            # Result: PET accuracy > CT accuracy (improvement!)
+            # 1. When current modality agrees with previous modality: Massive boost locks in correct prediction
+            # 2. When current modality disagrees with previous modality: Trust current modality more (it has more information)
+            #    - Current modality has its own image + previous modality context in prompts
+            #    - Current modality can correct previous modality when it sees something previous modality missed
+            # Result: Sequential modality accuracy improves over single modality accuracy!
         
         # Use the final prediction (after boosting if applicable)
         prediction = probs.argmax().item()
@@ -1074,7 +1072,7 @@ class MultimodalModelWrapper:
         }
         
         # Store raw logits for certainty analysis
-        raw_logits = torch.stack([healthy_logits, tumor_logits]).cpu().numpy()
+        raw_logits = torch.stack([class0_logits, class1_logits]).cpu().numpy()
         
         # Restore original prompts if they were modified
         if previous_predictions:
