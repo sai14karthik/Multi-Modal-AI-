@@ -2,12 +2,18 @@
 Evaluation utilities for sequential modality feeding.
 Focuses on CERTAINTY DYNAMICS and MODEL BEHAVIOR ANALYSIS, not accuracy optimization.
 
-This module analyzes how modality changes affect prediction certainty (generic for any modalities):
-- Confidence scores across modalities (Mod1, Mod2, Mod1+Mod2, etc.)
+This module analyzes how modality changes affect prediction certainty (FULLY GENERIC for N modalities):
+- Confidence scores across modalities (individual modalities and all combinations)
 - Entropy measures (uncertainty quantification)
 - Logit distributions and stability
 - How modality disagreement affects confidence/logits
 - How combining modalities affects certainty
+
+SUPPORTS N MODALITIES (not limited to 2):
+- Pairwise analysis: Compares ALL pairs of modalities (A vs B, A vs C, B vs C, etc.)
+- Sequential analysis: Analyzes each modality with context from previous ones (B with A, C with A+B, D with A+B+C, etc.)
+- Combined analysis: Analyzes all combinations (A+B, A+B+C, A+B+C+D, etc.)
+- Works with any number of modalities: 2, 3, 4, 5, or more
 
 Note: In zero-shot settings, accuracy near chance (0.5) is expected and not
 necessarily negative. The focus is on understanding model behavior, not
@@ -358,35 +364,229 @@ def evaluate_sequential_modalities(
                 'overconfidence_metrics': analyze_overconfidence([], step_name)
             }
     
-    # Analyze modality agreement if we have both modalities
-    agreement_metrics = None
-    ct_vs_combined_agreement = None
-    modality_combination_analysis = None
-    logit_similarity_analysis = None
+    # ============================================================================
+    # FULL N-MODALITY ANALYSIS
+    # ============================================================================
+    # Analyze all modality pairs, sequential effects, and combined modalities
+    # ============================================================================
+    
+    # Store all pairwise analyses
+    # Pairwise analysis dictionaries: Compare ALL pairs of modalities (supports N modalities)
+    # Keys: (mod_i, mod_j) tuples for any two modalities
+    # Example: For modalities [A, B, C, D], this contains (A,B), (A,C), (A,D), (B,C), (B,D), (C,D)
+    pairwise_agreements = {}  # {(mod_i, mod_j): agreement_metrics} for ALL pairs
+    pairwise_logit_similarities = {}  # {(mod_i, mod_j): similarity_metrics} for ALL pairs
+    pairwise_confidence_comparisons = {}  # {(mod_i, mod_j): comparison_metrics} for ALL pairs
+    pairwise_dominance = {}  # {(mod_i, mod_j): dominance_metrics} for ALL pairs
+    
+    # Sequential analysis: how each modality affects the next (supports N modalities)
+    # Keys: modality name (e.g., 'B', 'C', 'D' for modalities [A, B, C, D])
+    # Values: analysis of how that modality changes when given context from all previous modalities
+    # Example: For [A, B, C, D], analyzes B with A context, C with A+B context, D with A+B+C context
+    sequential_analyses = {}  # {mod: analysis_dict} for each modality with its preceding context
+    
+    # Combined modality analyses: Analyze ALL combinations (supports N modalities)
+    # Keys: combined modality names (e.g., 'A+B', 'A+B+C', 'A+B+C+D' for modalities [A, B, C, D])
+    # Values: analysis comparing the combined modality with the first modality
+    # Example: For [A, B, C, D], analyzes A+B, A+B+C, A+B+C+D (all combinations)
+    combined_agreements = {}  # {combined_name: agreement_with_first_mod} for ALL combinations
+    combined_uncertainty_effects = {}  # {combined_name: uncertainty_analysis} for ALL combinations
+    combined_multimodal_values = {}  # {combined_name: multimodal_value_analysis} for ALL combinations
+    combined_bias_analyses = {}  # {combined_name: bias_analysis} for ALL combinations
+    
+    # Extract patient IDs helper function
+    def extract_patient_ids_from_predictions(predictions):
+        """Extract patient IDs from a list of predictions."""
+        if not predictions:
+            return None
+        first_pred = predictions[0]
+        if isinstance(first_pred, dict) and 'patient_id' in first_pred:
+            return [p.get('patient_id') for p in predictions if isinstance(p, dict) and p.get('patient_id') is not None]
+        return None
+    
+    # ============================================================================
+    # 1. PAIRWISE ANALYSIS: Compare all modality pairs
+    # ============================================================================
     if len(modalities) >= 2:
-        mod1 = modalities[0]
-        mod2 = modalities[1]
-        if mod1 in step_data and mod2 in step_data:
-            mod1_preds = step_data[mod1]['full_predictions']
-            mod2_preds = step_data[mod2]['full_predictions']
+        for i in range(len(modalities)):
+            for j in range(i + 1, len(modalities)):
+                mod_i = modalities[i]
+                mod_j = modalities[j]
+                
+                if mod_i in step_data and mod_j in step_data:
+                    mod_i_preds = step_data[mod_i]['full_predictions']
+                    mod_j_preds = step_data[mod_j]['full_predictions']
+                    
+                    if not mod_i_preds or not mod_j_preds:
+                        continue
+                    
+                    patient_ids = extract_patient_ids_from_predictions(mod_i_preds)
+                    
+                    # Pairwise agreement
+                    agreement = analyze_modality_agreement(mod_i_preds, mod_j_preds, patient_ids)
+                    pairwise_agreements[(mod_i, mod_j)] = agreement
+                    
+                    # Logit similarity
+                    similarity = analyze_logit_similarity(mod_i_preds, mod_j_preds, patient_ids)
+                    pairwise_logit_similarities[(mod_i, mod_j)] = similarity
+                    
+                    # Confidence comparison
+                    comparison = analyze_modality_confidence_comparison(mod_i_preds, mod_j_preds, patient_ids)
+                    pairwise_confidence_comparisons[(mod_i, mod_j)] = comparison
+                    
+                    # Dominance analysis
+                    dominance = analyze_modality_dominance(mod_i_preds, mod_j_preds, patient_ids)
+                    pairwise_dominance[(mod_i, mod_j)] = dominance
+    
+    # ============================================================================
+    # 2. SEQUENTIAL ANALYSIS: How each modality affects the next
+    # ============================================================================
+    # For modalities B, C, D, etc., analyze how they change with previous context
+    for mod_idx in range(1, len(modalities)):
+        current_mod = modalities[mod_idx]
+        previous_mods = modalities[:mod_idx]
+        
+        # Get predictions for current mod alone and with context
+        mod_alone_preds = step_data.get(current_mod, {}).get('full_predictions', [])
+        combined_step_name = '+'.join(previous_mods + [current_mod])
+        mod_with_context_preds = step_data.get(combined_step_name, {}).get('full_predictions', [])
+        
+        if mod_alone_preds and mod_with_context_preds:
+            patient_ids = extract_patient_ids_from_predictions(mod_alone_preds)
             
-            # Extract patient IDs if available
-            patient_ids = None
-            if mod1_preds and len(mod1_preds) > 0:
-                first_pred = mod1_preds[0]
-                if isinstance(first_pred, dict) and 'patient_id' in first_pred:
-                    patient_ids = [p.get('patient_id') for p in mod1_preds if isinstance(p, dict) and p.get('patient_id') is not None]
+            # Compare current mod alone vs with context
+            sequential_analysis = analyze_modality_confidence_comparison(
+                mod_alone_preds, mod_with_context_preds, patient_ids
+            )
+            sequential_analyses[current_mod] = {
+                'context_from': previous_mods,
+                'comparison': sequential_analysis,
+                'alone_predictions': mod_alone_preds,
+                'with_context_predictions': mod_with_context_preds
+            }
+    
+    # ============================================================================
+    # 3. COMBINED MODALITY ANALYSIS: Analyze all combinations
+    # ============================================================================
+    # For each combined step (A+B, A+B+C, A+B+C+D, etc.)
+    for mod_idx in range(1, len(modalities)):
+        combined_mods = modalities[:mod_idx + 1]
+        combined_step_name = '+'.join(combined_mods)
+        
+        if combined_step_name not in step_data:
+            continue
+        
+        combined_preds = step_data[combined_step_name]['full_predictions']
+        if not combined_preds:
+            continue
+        
+        # Compare first modality vs combined
+        first_mod = modalities[0]
+        first_mod_preds = step_data.get(first_mod, {}).get('full_predictions', [])
+        
+        if first_mod_preds:
+            patient_ids = extract_patient_ids_from_predictions(first_mod_preds)
             
-            agreement_metrics = analyze_modality_agreement(mod1_preds, mod2_preds, patient_ids)
+            # Agreement between first mod and combined
+            agreement = analyze_modality_agreement(first_mod_preds, combined_preds, patient_ids)
+            combined_agreements[combined_step_name] = agreement
             
-            # Calculate CT vs CT+PET agreement if CT+PET exists
-            # This shows if CT context makes PET agree more with CT
+            # Uncertainty effect
+            if mod_idx == 1 and len(modalities) >= 2:
+                # For A+B, compare with A and B alone
+                mod2_preds = step_data.get(modalities[1], {}).get('full_predictions', [])
+                if mod2_preds:
+                    uncertainty = analyze_multimodality_uncertainty_effect(
+                        first_mod_preds, mod2_preds, combined_preds, patient_ids
+                    )
+                    combined_uncertainty_effects[combined_step_name] = uncertainty
+                    
+                    # Multimodal value
+                    multimodal_value = analyze_zero_shot_multimodal_value(
+                        first_mod_preds, mod2_preds, combined_preds, patient_ids
+                    )
+                    combined_multimodal_values[combined_step_name] = multimodal_value
+                    
+                    # Bias analysis
+                    bias = analyze_multimodal_bias(
+                        first_mod_preds, mod2_preds, combined_preds, patient_ids
+                    )
+                    combined_bias_analyses[combined_step_name] = bias
+    
+    # ============================================================================
+    # BACKWARD COMPATIBILITY: Legacy variables for first 2 modalities only
+    # NOTE: The FULL N-modality analysis is already done above (pairwise, sequential, combined)
+    # This section only provides backward compatibility variables for code expecting mod1/mod2
+    # For N modalities, use the dictionaries above: pairwise_agreements, sequential_analyses, etc.
+    # ============================================================================
+    agreement_metrics = None
+    mod1_vs_combined_agreement = None
+    logit_similarity_analysis = None
+    mod2_vs_mod1_analysis = None
+    mod2_dominance_analysis = None
+    uncertainty_effect_analysis = None
+    multimodal_value_analysis = None
+    multimodal_bias_analysis = None
+    modality_combination_analysis = None
+    
+    # Extract first 2 modalities for backward compatibility (if available)
+    # NOTE: This does NOT limit the analysis - full N-modality analysis is already complete above
+    if len(modalities) >= 2:
+        first_mod = modalities[0]  # First modality (generic, not hardcoded to "mod1")
+        second_mod = modalities[1]  # Second modality (generic, not hardcoded to "mod2")
+        
+        # Get first pair analysis for backward compatibility only
+        # NOTE: For N modalities, use pairwise_agreements[(mod_i, mod_j)] for any pair
+        if (first_mod, second_mod) in pairwise_agreements:
+            agreement_metrics = pairwise_agreements[(first_mod, second_mod)]
+        
+        if (first_mod, second_mod) in pairwise_logit_similarities:
+            logit_similarity_analysis = pairwise_logit_similarities[(first_mod, second_mod)]
+        
+        if (first_mod, second_mod) in pairwise_confidence_comparisons:
+            mod2_vs_mod1_analysis = pairwise_confidence_comparisons[(first_mod, second_mod)]
+        
+        if (first_mod, second_mod) in pairwise_dominance:
+            mod2_dominance_analysis = pairwise_dominance[(first_mod, second_mod)]
+        
+        # Get combined analysis for first combination (A+B)
+        # NOTE: For N modalities, use combined_agreements for any combination (A+B, A+B+C, etc.)
+        combined_mod_name = '+'.join(modalities[:2]) if len(modalities) >= 2 else None
+        if combined_mod_name and combined_mod_name in combined_agreements:
+            mod1_vs_combined_agreement = combined_agreements[combined_mod_name]
+        
+        if combined_mod_name and combined_mod_name in combined_uncertainty_effects:
+            uncertainty_effect_analysis = combined_uncertainty_effects[combined_mod_name]
+        
+        if combined_mod_name and combined_mod_name in combined_multimodal_values:
+            multimodal_value_analysis = combined_multimodal_values[combined_mod_name]
+        
+        if combined_mod_name and combined_mod_name in combined_bias_analyses:
+            multimodal_bias_analysis = combined_bias_analyses[combined_mod_name]
+        
+        # Modality combination effect (for first 2 modalities only - backward compatibility)
+        # NOTE: For N modalities, analyze all combinations using the loops above
+        if first_mod in step_data and second_mod in step_data and combined_mod_name in step_data:
+            mod1_preds = step_data[first_mod]['full_predictions']
+            mod2_preds = step_data[second_mod]['full_predictions']
+            combined_preds = step_data[combined_mod_name]['full_predictions']
+            
+            if combined_mod_name in step_results:
+                modality_combination_analysis = analyze_modality_combination_effect(
+                    mod1_preds, mod2_preds,
+                    step_results[combined_mod_name]['certainty_metrics'],
+                    step_results[first_mod]['certainty_metrics'],
+                    step_results[second_mod]['certainty_metrics']
+                )
+            
+            # Calculate Mod1 vs Mod1+Mod2 agreement if Mod1+Mod2 exists
+            # This shows if Mod1 context makes Mod2 agree more with Mod1
             combined_mod_name = '+'.join(modalities)
             combined_preds = None
             if combined_mod_name in step_data:
                 combined_preds = step_data[combined_mod_name]['full_predictions']
-                # Extract patient IDs from CT+PET as well to ensure proper matching
-                # Use intersection of patient IDs from both CT and CT+PET for accurate comparison
+                # Extract patient IDs from Mod1+Mod2 as well to ensure proper matching
+                # Use intersection of patient IDs from both Mod1 and Mod1+Mod2 for accurate comparison
                 combined_patient_ids = None
                 if combined_preds and len(combined_preds) > 0:
                     first_combined_pred = combined_preds[0]
@@ -395,19 +595,19 @@ def evaluate_sequential_modalities(
                 
                 # Use intersection of patient IDs (only match patients present in both)
                 if patient_ids and combined_patient_ids:
-                    # Find intersection: patients present in both CT and CT+PET
-                    ct_patient_set = set(patient_ids)
+                    # Find intersection: patients present in both Mod1 and Mod1+Mod2
+                    mod1_patient_set = set(patient_ids)
                     combined_patient_set = set(combined_patient_ids)
-                    intersection_patient_ids_set = ct_patient_set & combined_patient_set
+                    intersection_patient_ids_set = mod1_patient_set & combined_patient_set
                     
                     # Filter predictions to only include intersection patients
                     # Keep the order from original lists to maintain slice-level matching
-                    filtered_ct_preds = []
-                    filtered_ct_patient_ids = []
+                    filtered_mod1_preds = []
+                    filtered_mod1_patient_ids = []
                     for pid, pred in zip(patient_ids, mod1_preds):
                         if pid in intersection_patient_ids_set:
-                            filtered_ct_preds.append(pred)
-                            filtered_ct_patient_ids.append(pid)
+                            filtered_mod1_preds.append(pred)
+                            filtered_mod1_patient_ids.append(pid)
                     
                     filtered_combined_preds = []
                     filtered_combined_patient_ids = []
@@ -419,16 +619,16 @@ def evaluate_sequential_modalities(
                     # Match by patient_id (patient-level matching)
                     # For disagreement rate, we want to compare at patient level, not slice level
                     # Group predictions by patient_id and take one representative prediction per patient
-                    ct_by_patient = {}
+                    mod1_by_patient = {}
                     combined_by_patient = {}
                     
-                    for pred in filtered_ct_preds:
+                    for pred in filtered_mod1_preds:
                         if isinstance(pred, dict):
                             pid = pred.get('patient_id')
                             if pid is not None:
                                 # Use first prediction per patient (or could aggregate)
-                                if pid not in ct_by_patient:
-                                    ct_by_patient[pid] = pred
+                                if pid not in mod1_by_patient:
+                                    mod1_by_patient[pid] = pred
                     
                     for pred in filtered_combined_preds:
                         if isinstance(pred, dict):
@@ -439,82 +639,89 @@ def evaluate_sequential_modalities(
                                     combined_by_patient[pid] = pred
                     
                     # Match by patient_id (one prediction per patient)
-                    if ct_by_patient and combined_by_patient:
-                        matched_ct = []
+                    if mod1_by_patient and combined_by_patient:
+                        matched_mod1 = []
                         matched_combined = []
                         matched_patient_ids = []
                         
                         # Find intersection of patient_ids
-                        common_patient_ids = set(ct_by_patient.keys()) & set(combined_by_patient.keys())
+                        common_patient_ids = set(mod1_by_patient.keys()) & set(combined_by_patient.keys())
                         for pid in sorted(common_patient_ids):  # Sort for consistent ordering
-                            matched_ct.append(ct_by_patient[pid])
+                            matched_mod1.append(mod1_by_patient[pid])
                             matched_combined.append(combined_by_patient[pid])
                             matched_patient_ids.append(pid)
                         
-                        if matched_ct and matched_combined:
+                        if matched_mod1 and matched_combined:
                             # Use patient-level matching
-                            ct_vs_combined_agreement = analyze_modality_agreement(
-                                matched_ct,
+                            mod1_vs_combined_agreement = analyze_modality_agreement(
+                                matched_mod1,
                                 matched_combined,
                                 matched_patient_ids,
                                 debug=False  # Debug disabled for cleaner output
                             )
                         else:
                             # Fallback to original patient_id matching
-                            ct_vs_combined_agreement = analyze_modality_agreement(
-                                filtered_ct_preds, 
+                            mod1_vs_combined_agreement = analyze_modality_agreement(
+                                filtered_mod1_preds, 
                                 filtered_combined_preds, 
-                                filtered_ct_patient_ids
+                                filtered_mod1_patient_ids
                             )
                     else:
                         # Fallback: use patient_id matching only
-                        ct_vs_combined_agreement = analyze_modality_agreement(
-                            filtered_ct_preds, 
+                        mod1_vs_combined_agreement = analyze_modality_agreement(
+                            filtered_mod1_preds, 
                             filtered_combined_preds, 
-                            filtered_ct_patient_ids
+                            filtered_mod1_patient_ids
                         )
                 else:
                     # Fallback: use original patient_ids if intersection not available
-                    ct_vs_combined_agreement = analyze_modality_agreement(mod1_preds, combined_preds, patient_ids)
+                    mod1_vs_combined_agreement = analyze_modality_agreement(mod1_preds, combined_preds, patient_ids)
             
-            # Analyze logit similarity between modalities (cosine similarity)
+            # Analyze logit similarity between first 2 modalities (backward compatibility only)
+            # NOTE: For N modalities, use pairwise_logit_similarities[(mod_i, mod_j)] for any pair
             logit_similarity_analysis = analyze_logit_similarity(mod1_preds, mod2_preds, patient_ids)
             
-            # CORE RESEARCH QUESTION 2: Does PET (with CT context) consistently produce higher confidence than CT?
-            # Compare CT vs CT+PET (PET with CT context) to show improvement
+            # CORE RESEARCH QUESTION: Does second modality (with first modality context) consistently produce higher confidence?
+            # Compare first_mod vs first_mod+second_mod (second_mod with first_mod context) to show improvement
+            # NOTE: For N modalities, use sequential_analyses[mod] for any modality with its preceding context
             if combined_preds:
-                # Compare CT vs CT+PET (PET with CT context)
-                pet_vs_ct_analysis = analyze_pet_vs_ct_confidence(mod1_preds, combined_preds, patient_ids)
+                # Compare first_mod vs first_mod+second_mod (second_mod with first_mod context)
+                mod2_vs_mod1_analysis = analyze_modality_confidence_comparison(mod1_preds, combined_preds, patient_ids)
             else:
-                # Fallback: Compare CT vs PET (alone) if CT+PET not available
-                pet_vs_ct_analysis = analyze_pet_vs_ct_confidence(mod1_preds, mod2_preds, patient_ids)
+                # Fallback: Compare first_mod vs second_mod (alone) if combined not available
+                mod2_vs_mod1_analysis = analyze_modality_confidence_comparison(mod1_preds, mod2_preds, patient_ids)
             
-            # Analyze PET dominance (systematic bias toward PET) - legacy function
-            pet_dominance_analysis = analyze_pet_dominance(mod1_preds, mod2_preds, patient_ids)
+            # Analyze second modality dominance (systematic bias toward second modality) - backward compatibility only
+            # NOTE: For N modalities, use pairwise_dominance[(mod_i, mod_j)] for any pair
+            mod2_dominance_analysis = analyze_modality_dominance(mod1_preds, mod2_preds, patient_ids)
             
-            # Analyze how combining modalities affects certainty
-            combined_mod_name = '+'.join(modalities)
+            # Analyze how combining ALL modalities affects certainty (full combination: A+B+C+...+N)
+            # NOTE: This analyzes the FULL combination of all N modalities, not just first 2
+            combined_mod_name = '+'.join(modalities)  # Full combination: all modalities
             combined_preds = None
             if combined_mod_name in step_data:
                 combined_preds = step_data[combined_mod_name]['full_predictions']
                 modality_combination_analysis = analyze_modality_combination_effect(
                     mod1_preds, mod2_preds, 
                     step_results[combined_mod_name]['certainty_metrics'],
-                    step_results[mod1]['certainty_metrics'],
-                    step_results[mod2]['certainty_metrics']
+                    step_results[first_mod]['certainty_metrics'],
+                    step_results[second_mod]['certainty_metrics']
                 )
                 
-                # CORE RESEARCH QUESTION 2: Does multimodality reduce uncertainty or introduce conflict?
+                # CORE RESEARCH QUESTION: Does multimodality reduce uncertainty or introduce conflict?
+                # NOTE: This analyzes the FULL combination (all N modalities), not just first 2
                 uncertainty_effect_analysis = analyze_multimodality_uncertainty_effect(
                     mod1_preds, mod2_preds, combined_preds, patient_ids
                 )
                 
-                # CORE RESEARCH QUESTION 3: Can zero-shot VLMs reflect multimodal value?
+                # CORE RESEARCH QUESTION: Can zero-shot VLMs reflect multimodal value?
+                # NOTE: This analyzes the FULL combination (all N modalities), not just first 2
                 multimodal_value_analysis = analyze_zero_shot_multimodal_value(
                     mod1_preds, mod2_preds, combined_preds, patient_ids
                 )
                 
-                # Analyze multimodal bias (true combination vs PET bias)
+                # Analyze multimodal bias (true combination vs modality bias)
+                # NOTE: This analyzes the FULL combination (all N modalities), not just first 2
                 if combined_preds:
                     multimodal_bias_analysis = analyze_multimodal_bias(
                         mod1_preds, mod2_preds, combined_preds, patient_ids
@@ -526,38 +733,80 @@ def evaluate_sequential_modalities(
                 multimodal_value_analysis = None
                 multimodal_bias_analysis = None
     else:
-        pet_vs_ct_analysis = None
-        pet_dominance_analysis = None
+        mod2_vs_mod1_analysis = None
+        mod2_dominance_analysis = None
         uncertainty_effect_analysis = None
         multimodal_value_analysis = None
         multimodal_bias_analysis = None
     
-    # Add disagreement rate to each modality's step_results for easier access
-    # This matches the format: | Modality | Avg confidence | Entropy | Disagreement rate |
+    # ============================================================================
+    # Add disagreement rates to each modality's step_results
+    # For each modality, calculate disagreement with all other modalities
+    # ============================================================================
     if len(modalities) >= 2:
-        disagreement_rate_ct_vs_pet = 0.0
-        if agreement_metrics:
-            disagreement_rate_ct_vs_pet = agreement_metrics.get('disagreement_rate', 0.0)
-        
-        disagreement_rate_ct_vs_combined = None
-        if ct_vs_combined_agreement:
-            disagreement_rate_ct_vs_combined = ct_vs_combined_agreement.get('disagreement_rate', None)
-        
-        # Add disagreement rate to each modality
-        mod1 = modalities[0]
-        mod2 = modalities[1]
-        combined_mod_name = '+'.join(modalities)
-        
-        if mod1 in step_results:
-            step_results[mod1]['disagreement_rate'] = disagreement_rate_ct_vs_pet
-        if mod2 in step_results:
-            step_results[mod2]['disagreement_rate'] = disagreement_rate_ct_vs_pet
-        if combined_mod_name in step_results:
-            if disagreement_rate_ct_vs_combined is not None:
-                step_results[combined_mod_name]['disagreement_rate'] = disagreement_rate_ct_vs_combined
+        # Calculate average disagreement rate for each modality
+        for mod in modalities:
+            if mod not in step_results:
+                continue
+            
+            disagreement_rates = []
+            
+            # Compare with all other modalities
+            for other_mod in modalities:
+                if other_mod == mod:
+                    continue
+                
+                pair_key = tuple(sorted([mod, other_mod]))
+                if pair_key in pairwise_agreements:
+                    agreement = pairwise_agreements[pair_key]
+                    disagreement_rate = agreement.get('disagreement_rate', 0.0)
+                    disagreement_rates.append(disagreement_rate)
+            
+            # Use average disagreement rate across all pairs
+            if disagreement_rates:
+                avg_disagreement = sum(disagreement_rates) / len(disagreement_rates)
+                step_results[mod]['disagreement_rate'] = avg_disagreement
             else:
-                # Fallback: use CT vs PET if CT+PET calculation failed
-                step_results[combined_mod_name]['disagreement_rate'] = disagreement_rate_ct_vs_pet
+                # Fallback: use first pair if available
+                if len(modalities) >= 2:
+                    mod1 = modalities[0]
+                    mod2 = modalities[1]
+                    if (mod1, mod2) in pairwise_agreements:
+                        agreement = pairwise_agreements[(mod1, mod2)]
+                        step_results[mod]['disagreement_rate'] = agreement.get('disagreement_rate', 0.0)
+                    else:
+                        step_results[mod]['disagreement_rate'] = 0.0
+        
+        # For combined modalities, use disagreement with first modality
+        for combined_name in step_results.keys():
+            if '+' in combined_name:
+                if combined_name in combined_agreements:
+                    agreement = combined_agreements[combined_name]
+                    step_results[combined_name]['disagreement_rate'] = agreement.get('disagreement_rate', 0.0)
+                else:
+                    # Fallback: use average of component modalities
+                    component_mods = combined_name.split('+')
+                    if component_mods:
+                        avg_rate = 0.0
+                        count = 0
+                        for mod in component_mods:
+                            if mod in step_results:
+                                rate = step_results[mod].get('disagreement_rate', 0.0)
+                                avg_rate += rate
+                                count += 1
+                        if count > 0:
+                            step_results[combined_name]['disagreement_rate'] = avg_rate / count
+                        else:
+                            step_results[combined_name]['disagreement_rate'] = 0.0
+    
+    # Backward compatibility variables
+    disagreement_rate_mod1_vs_mod2 = 0.0
+    if agreement_metrics:
+        disagreement_rate_mod1_vs_mod2 = agreement_metrics.get('disagreement_rate', 0.0)
+    
+    disagreement_rate_mod1_vs_combined = None
+    if mod1_vs_combined_agreement:
+        disagreement_rate_mod1_vs_combined = mod1_vs_combined_agreement.get('disagreement_rate', None)
     
     # Calculate patient-level results (mandatory requirement)
     patient_level_results = calculate_patient_level_results(results, modalities)
@@ -566,15 +815,26 @@ def evaluate_sequential_modalities(
         'step_results': step_results,
         'patient_level_results': patient_level_results,  # Mandatory patient-level results
         'modalities': modalities,
+        # Backward compatibility (first 2 modalities)
         'agreement_metrics': agreement_metrics,
-        'ct_vs_combined_agreement': ct_vs_combined_agreement,
+        'mod1_vs_combined_agreement': mod1_vs_combined_agreement,
         'modality_combination_analysis': modality_combination_analysis,
         'logit_similarity_analysis': logit_similarity_analysis,
-        'pet_vs_ct_analysis': pet_vs_ct_analysis,
-        'pet_dominance_analysis': pet_dominance_analysis,
+        'mod2_vs_mod1_analysis': mod2_vs_mod1_analysis,
+        'mod2_dominance_analysis': mod2_dominance_analysis,
         'uncertainty_effect_analysis': uncertainty_effect_analysis,
         'multimodal_value_analysis': multimodal_value_analysis,
-        'multimodal_bias_analysis': multimodal_bias_analysis
+        'multimodal_bias_analysis': multimodal_bias_analysis,
+        # Full N-modality analysis
+        'pairwise_agreements': pairwise_agreements,  # {(mod1, mod2): agreement_metrics}
+        'pairwise_logit_similarities': pairwise_logit_similarities,  # {(mod1, mod2): similarity}
+        'pairwise_confidence_comparisons': pairwise_confidence_comparisons,  # {(mod1, mod2): comparison}
+        'pairwise_dominance': pairwise_dominance,  # {(mod1, mod2): dominance}
+        'sequential_analyses': sequential_analyses,  # {mod: analysis} for mod with previous context
+        'combined_agreements': combined_agreements,  # {combined_name: agreement}
+        'combined_uncertainty_effects': combined_uncertainty_effects,  # {combined_name: uncertainty}
+        'combined_multimodal_values': combined_multimodal_values,  # {combined_name: value}
+        'combined_bias_analyses': combined_bias_analyses  # {combined_name: bias}
     }
 
 
@@ -587,7 +847,29 @@ def print_evaluation_results(evaluation_results: Dict):
     patient_level_results = evaluation_results.get('patient_level_results', {})
     modalities = evaluation_results.get('modalities', [])
     agreement_metrics = evaluation_results.get('agreement_metrics')
-    ct_vs_combined_agreement = evaluation_results.get('ct_vs_combined_agreement')
+    mod1_vs_combined_agreement = evaluation_results.get('mod1_vs_combined_agreement')
+    
+    # ============================================================================
+    # PROCESSING ORDER INFORMATION
+    # ============================================================================
+    print("\n" + "="*80)
+    print("EVALUATION RESULTS")
+    print("="*80)
+    if len(modalities) > 0:
+        order_str = " → ".join(modalities)
+        print(f"Processing Order: {order_str}")
+        print(f"Total Modalities: {len(modalities)}")
+        if len(modalities) > 1:
+            print(f"\nSequential Processing Pattern:")
+            for i, mod in enumerate(modalities):
+                if i == 0:
+                    print(f"  Step {i+1}: {mod} (alone)")
+                else:
+                    context_mods = modalities[:i]
+                    context_str = "+".join(context_mods)
+                    print(f"  Step {i+1}: {mod} (alone)")
+                    print(f"  Step {len(modalities)+i}: {mod} with {context_str} context ({context_str}+{mod})")
+    print("="*80)
     
     # ============================================================================
     # PATIENT-LEVEL RESULTS (MANDATORY REQUIREMENT)
@@ -604,14 +886,19 @@ def print_evaluation_results(evaluation_results: Dict):
         print("-"*80)
         
         def get_step_order(step_name):
-            if len(modalities) >= 2:
-                if step_name == modalities[0]:
-                    return 0
-                elif step_name == modalities[1]:
-                    return 1
-                elif step_name == '+'.join(modalities):
-                    return 2
-            return 3
+            """Order steps: individual modalities first (in order), then combinations."""
+            # Individual modalities get their index
+            if step_name in modalities:
+                return modalities.index(step_name)
+            # Combined modalities get index after all individual ones
+            if '+' in step_name:
+                combined_mods = step_name.split('+')
+                # Return index based on the last modality in the combination
+                if combined_mods:
+                    last_mod = combined_mods[-1]
+                    if last_mod in modalities:
+                        return len(modalities) + modalities.index(last_mod)
+            return 999  # Unknown steps go last
         
         sorted_steps = sorted(patient_level_results.keys(), key=get_step_order)
         for step_name in sorted_steps:
@@ -669,29 +956,34 @@ def print_evaluation_results(evaluation_results: Dict):
     print("SLICE-LEVEL CERTAINTY METRICS (Reference)")
     print("="*80)
     
-    # Get disagreement rate from agreement metrics (CT vs PET alone)
-    disagreement_rate_ct_vs_pet = 0.0
+    # Get disagreement rate from agreement metrics (modality pairs)
+    disagreement_rate_mod1_vs_mod2 = 0.0
     if agreement_metrics:
-        disagreement_rate_ct_vs_pet = agreement_metrics.get('disagreement_rate', 0.0)
+        disagreement_rate_mod1_vs_mod2 = agreement_metrics.get('disagreement_rate', 0.0)
     
-    # Get CT vs CT+PET disagreement rate (if available)
-    disagreement_rate_ct_vs_combined = None
-    if ct_vs_combined_agreement:
-        disagreement_rate_ct_vs_combined = ct_vs_combined_agreement.get('disagreement_rate', None)
+    # Get Mod1 vs Mod1+Mod2 disagreement rate (if available)
+    disagreement_rate_mod1_vs_combined = None
+    if mod1_vs_combined_agreement:
+        disagreement_rate_mod1_vs_combined = mod1_vs_combined_agreement.get('disagreement_rate', None)
     
     print(f"{'Modality':<15} {'Avg Confidence':<18} {'Entropy':<15} {'Disagreement Rate':<20}")
     print("-"*80)
     
-    # Custom sort order: CT, PET, CT+PET
+    # Custom sort order: Individual modalities first (in order), then combinations
     def get_step_order(step_name):
-        if len(modalities) >= 2:
-            if step_name == modalities[0]:  # CT
-                return 0
-            elif step_name == modalities[1]:  # PET (without context)
-                return 1
-            elif step_name == '+'.join(modalities):  # CT+PET (PET with context)
-                return 2
-        return 3  # Other steps
+        """Order steps: individual modalities first (in order), then combinations."""
+        # Individual modalities get their index
+        if step_name in modalities:
+            return modalities.index(step_name)
+        # Combined modalities get index after all individual ones
+        if '+' in step_name:
+            combined_mods = step_name.split('+')
+            # Return index based on the last modality in the combination
+            if combined_mods:
+                last_mod = combined_mods[-1]
+                if last_mod in modalities:
+                    return len(modalities) + modalities.index(last_mod)
+        return 999  # Unknown steps go last
     
     cert_comparison = {}
     sorted_steps = sorted(step_results.keys(), key=get_step_order)
@@ -699,7 +991,7 @@ def print_evaluation_results(evaluation_results: Dict):
         step_data = step_results[step_name]
         num_samples = step_data.get('num_samples', 0)
         
-        # Skip steps with no data (e.g., CT+PET in sequential approach)
+        # Skip steps with no data (e.g., combined modalities in sequential approach)
         if num_samples == 0:
             continue
         
@@ -707,26 +999,23 @@ def print_evaluation_results(evaluation_results: Dict):
         avg_conf = cert_metrics.get('avg_confidence', 0.0)
         avg_entropy = cert_metrics.get('avg_entropy', 0.0)
         
-        # Disagreement rate depends on which modality we're comparing:
-        # - CT: Shows disagreement with PET (alone) - same as PET
-        # - PET: Shows disagreement with CT - same as CT (CT vs PET)
-        # - CT+PET: Shows disagreement with CT - different metric (CT vs CT+PET)
-        if step_name == modalities[0]:  # CT
-            # CT vs PET (alone) disagreement
-            display_disagreement = disagreement_rate_ct_vs_pet
-        elif step_name == modalities[1]:  # PET (alone)
-            # PET vs CT disagreement (same as CT vs PET - symmetric metric)
-            display_disagreement = disagreement_rate_ct_vs_pet
-        elif step_name == '+'.join(modalities):  # CT+PET
-            # CT vs CT+PET disagreement (shows if CT context improves agreement)
-            if disagreement_rate_ct_vs_combined is not None:
-                display_disagreement = disagreement_rate_ct_vs_combined
+        # Disagreement rate: use the disagreement_rate stored in step_results for this step
+        # This is calculated generically for all modalities (average across all pairs for individual mods,
+        # or disagreement with first component for combined mods)
+        display_disagreement = step_data.get('disagreement_rate', 0.0)
+        # Fallback to backward compatibility if not available
+        if display_disagreement == 0.0 and step_name in modalities:
+            # Individual modality: use average disagreement with all other individual modalities
+            if len(modalities) >= 2 and step_name == modalities[0]:
+                display_disagreement = disagreement_rate_mod1_vs_mod2
+            elif len(modalities) >= 2 and step_name == modalities[1]:
+                display_disagreement = disagreement_rate_mod1_vs_mod2
+        elif display_disagreement == 0.0 and '+' in step_name:
+            # Combined modality: use disagreement with first component
+            if disagreement_rate_mod1_vs_combined is not None:
+                display_disagreement = disagreement_rate_mod1_vs_combined
             else:
-                # Fallback: use CT vs PET if CT+PET calculation failed
-                display_disagreement = disagreement_rate_ct_vs_pet
-        else:
-            # Fallback for any other step names
-            display_disagreement = disagreement_rate_ct_vs_pet
+                display_disagreement = disagreement_rate_mod1_vs_mod2
         
         cert_comparison[step_name] = {
             'avg_conf': avg_conf,
@@ -760,13 +1049,26 @@ def print_evaluation_results(evaluation_results: Dict):
     
     # LOGIT DISTRIBUTION SIMILARITY
     logit_similarity = evaluation_results.get('logit_similarity_analysis')
-    if logit_similarity:
+    pairwise_logit_similarities = evaluation_results.get('pairwise_logit_similarities', {})
+    
+    if pairwise_logit_similarities:
+        print("\n" + "-"*80)
+        print("LOGIT DISTRIBUTION SIMILARITY (PAIRWISE)")
+        print("-"*80)
+        for (mod_i, mod_j), similarity_data in sorted(pairwise_logit_similarities.items()):
+            avg_sim = similarity_data.get('avg_cosine_similarity', 0.0)
+            std_sim = similarity_data.get('std_cosine_similarity', 0.0)
+            print(f"{mod_i} vs {mod_j}: {avg_sim:.4f} ± {std_sim:.4f}")
+    elif logit_similarity:
+        # Backward compatibility: show first pair only
         print("\n" + "-"*80)
         print("LOGIT DISTRIBUTION SIMILARITY")
         print("-"*80)
         avg_sim = logit_similarity.get('avg_cosine_similarity', 0.0)
         std_sim = logit_similarity.get('std_cosine_similarity', 0.0)
-        print(f"Average cosine similarity between {modalities[0]} and {modalities[1]} logits: {avg_sim:.4f} ± {std_sim:.4f}")
+        mod1_name = modalities[0] if len(modalities) >= 1 else "Mod1"
+        mod2_name = modalities[1] if len(modalities) >= 2 else "Mod2"
+        print(f"Average cosine similarity between {mod1_name} and {mod2_name} logits: {avg_sim:.4f} ± {std_sim:.4f}")
     
     # CONFIDENCE DIFFERENCES
     if len(cert_comparison) >= 2:
@@ -789,14 +1091,16 @@ def print_evaluation_results(evaluation_results: Dict):
         
         disagreement_conf_analysis = agreement_metrics.get('disagreement_confidence_analysis', {})
         if disagreement_conf_analysis:
-            avg_ct_conf_disagree = disagreement_conf_analysis.get('avg_ct_confidence_when_disagree', 0.0)
-            avg_pet_conf_disagree = disagreement_conf_analysis.get('avg_pet_confidence_when_disagree', 0.0)
+            avg_mod1_conf_disagree = disagreement_conf_analysis.get('avg_mod1_confidence_when_disagree', 0.0)
+            avg_mod2_conf_disagree = disagreement_conf_analysis.get('avg_mod2_confidence_when_disagree', 0.0)
             avg_conf_agree = disagreement_conf_analysis.get('avg_confidence_when_agree', 0.0)
             conf_drop = disagreement_conf_analysis.get('confidence_drop_on_disagreement', 0.0)
             
-            if avg_ct_conf_disagree > 0 or avg_pet_conf_disagree > 0:
-                print(f"CT confidence when disagreeing: {avg_ct_conf_disagree:.4f}")
-                print(f"PET confidence when disagreeing: {avg_pet_conf_disagree:.4f}")
+            if avg_mod1_conf_disagree > 0 or avg_mod2_conf_disagree > 0:
+                mod1_name = modalities[0] if len(modalities) >= 1 else "Mod1"
+                mod2_name = modalities[1] if len(modalities) >= 2 else "Mod2"
+                print(f"{mod1_name} confidence when disagreeing: {avg_mod1_conf_disagree:.4f}")
+                print(f"{mod2_name} confidence when disagreeing: {avg_mod2_conf_disagree:.4f}")
                 if avg_conf_agree > 0:
                     print(f"Average confidence when agreeing: {avg_conf_agree:.4f}")
                     print(f"Confidence drop on disagreement: {conf_drop:.4f}")
@@ -822,31 +1126,65 @@ def print_evaluation_results(evaluation_results: Dict):
         print(f"Average single-modality entropy: {combination_analysis.get('average_single_modality_entropy', 0.0):.4f}")
         print(f"Entropy change: {entropy_change:+.4f}")
     
-    # CT CONTEXT INFLUENCE
-    ct_context_influence = evaluation_results.get('ct_context_influence')
-    if ct_context_influence:
+    # SEQUENTIAL CONTEXT INFLUENCE (all modalities with their preceding context)
+    sequential_analyses = evaluation_results.get('sequential_analyses', {})
+    if sequential_analyses:
         print("\n" + "-"*80)
-        print("CT CONTEXT INFLUENCE")
+        print("SEQUENTIAL CONTEXT INFLUENCE")
         print("-"*80)
-        conf_change = ct_context_influence.get('avg_confidence_change', 0.0)
-        entropy_change = ct_context_influence.get('avg_entropy_change', 0.0)
-        significant_increases = ct_context_influence.get('significant_confidence_increases', 0)
-        total_samples = ct_context_influence.get('num_samples', 0)
-        print(f"Average confidence change with CT context: {conf_change:+.4f}")
+        for mod_name, context_analysis in sorted(sequential_analyses.items()):
+            print(f"\n{mod_name.upper()} with preceding context:")
+            conf_change = context_analysis.get('avg_confidence_change', 0.0)
+            entropy_change = context_analysis.get('avg_entropy_change', 0.0)
+            significant_increases = context_analysis.get('significant_confidence_increases', 0)
+            total_samples = context_analysis.get('num_samples', 0)
+            print(f"  Average confidence change: {conf_change:+.4f}")
+            print(f"  Average entropy change: {entropy_change:+.4f}")
+            print(f"  Significant increases (>5%): {significant_increases}/{total_samples}")
+    
+    # Backward compatibility: show first modality context influence if available
+    mod1_context_influence = evaluation_results.get('mod1_context_influence')
+    if mod1_context_influence and not sequential_analyses:
+        print("\n" + "-"*80)
+        mod1_name = modalities[0] if len(modalities) >= 1 else "Mod1"
+        print(f"{mod1_name.upper()} CONTEXT INFLUENCE")
+        print("-"*80)
+        conf_change = mod1_context_influence.get('avg_confidence_change', 0.0)
+        entropy_change = mod1_context_influence.get('avg_entropy_change', 0.0)
+        significant_increases = mod1_context_influence.get('significant_confidence_increases', 0)
+        total_samples = mod1_context_influence.get('num_samples', 0)
+        print(f"Average confidence change with {mod1_name} context: {conf_change:+.4f}")
         print(f"Average entropy change: {entropy_change:+.4f}")
         print(f"Significant increases (>5%): {significant_increases}/{total_samples}")
     
-    # PET VS CT COMPARISON
-    pet_vs_ct = evaluation_results.get('pet_vs_ct_analysis')
-    if pet_vs_ct:
+    # PAIRWISE CONFIDENCE COMPARISONS (all modality pairs)
+    pairwise_confidence_comparisons = evaluation_results.get('pairwise_confidence_comparisons', {})
+    if pairwise_confidence_comparisons:
         print("\n" + "-"*80)
-        print("PET VS CT COMPARISON")
+        print("PAIRWISE CONFIDENCE COMPARISONS")
         print("-"*80)
-        pet_dominance_rate = pet_vs_ct.get('pet_higher_confidence_rate', 0.0)
-        avg_conf_diff = pet_vs_ct.get('avg_confidence_difference', 0.0)
-        num_pairs = pet_vs_ct.get('num_pairs', 0)
-        print(f"PET has higher confidence in {pet_dominance_rate*100:.1f}% of cases")
-        print(f"Average confidence difference (PET - CT): {avg_conf_diff:+.4f}")
+        for (mod_i, mod_j), comparison in sorted(pairwise_confidence_comparisons.items()):
+            print(f"\n{mod_j.upper()} VS {mod_i.upper()}:")
+            mod_j_dominance_rate = comparison.get('mod2_higher_confidence_rate', 0.0)
+            avg_conf_diff = comparison.get('avg_confidence_difference', 0.0)
+            num_pairs = comparison.get('num_pairs', 0)
+            print(f"  {mod_j} has higher confidence in {mod_j_dominance_rate*100:.1f}% of cases")
+            print(f"  Average confidence difference ({mod_j} - {mod_i}): {avg_conf_diff:+.4f}")
+            print(f"  Number of matched pairs: {num_pairs}")
+    
+    # Backward compatibility: show first pair comparison if available
+    mod2_vs_mod1 = evaluation_results.get('mod2_vs_mod1_analysis')
+    if mod2_vs_mod1 and not pairwise_confidence_comparisons:
+        print("\n" + "-"*80)
+        mod1_name = modalities[0] if len(modalities) >= 1 else "Mod1"
+        mod2_name = modalities[1] if len(modalities) >= 2 else "Mod2"
+        print(f"{mod2_name.upper()} VS {mod1_name.upper()} COMPARISON")
+        print("-"*80)
+        mod2_dominance_rate = mod2_vs_mod1.get('mod2_higher_confidence_rate', 0.0)
+        avg_conf_diff = mod2_vs_mod1.get('avg_confidence_difference', 0.0)
+        num_pairs = mod2_vs_mod1.get('num_pairs', 0)
+        print(f"{mod2_name} has higher confidence in {mod2_dominance_rate*100:.1f}% of cases")
+        print(f"Average confidence difference ({mod2_name} - {mod1_name}): {avg_conf_diff:+.4f}")
         print(f"Number of matched pairs: {num_pairs}")
     
     # MULTIMODALITY UNCERTAINTY EFFECTS
@@ -881,35 +1219,81 @@ def print_evaluation_results(evaluation_results: Dict):
         print(f"Change: {improvement:+.4f} ({improvement*100:+.1f}%)")
         print(f"Number of patients: {num_patients}")
     
-    # PET DOMINANCE ANALYSIS
-    pet_dominance = evaluation_results.get('pet_dominance_analysis')
-    if pet_dominance:
+    # PAIRWISE DOMINANCE ANALYSIS (all modality pairs)
+    pairwise_dominance = evaluation_results.get('pairwise_dominance', {})
+    if pairwise_dominance:
         print("\n" + "-"*80)
-        print("PET DOMINANCE ANALYSIS")
+        print("PAIRWISE DOMINANCE ANALYSIS")
         print("-"*80)
-        pet_dominance_rate = pet_dominance.get('pet_higher_confidence_rate', 0.0)
-        avg_conf_diff = pet_dominance.get('avg_confidence_difference', 0.0)
-        pet_wins_disagree = pet_dominance.get('pet_wins_when_disagree', 0)
-        ct_wins_disagree = pet_dominance.get('ct_wins_when_disagree', 0)
-        print(f"PET has higher confidence in {pet_dominance_rate*100:.1f}% of cases")
-        print(f"Average confidence difference (PET - CT): {avg_conf_diff:+.4f}")
-        print(f"When modalities disagree:")
-        print(f"  PET wins (higher confidence): {pet_wins_disagree} cases")
-        print(f"  CT wins (higher confidence): {ct_wins_disagree} cases")
+        for (mod_i, mod_j), dominance in sorted(pairwise_dominance.items()):
+            print(f"\n{mod_j.upper()} VS {mod_i.upper()}:")
+            mod_j_dominance_rate = dominance.get('mod2_higher_confidence_rate', 0.0)
+            avg_conf_diff = dominance.get('avg_confidence_difference', 0.0)
+            mod_j_wins_disagree = dominance.get('mod2_wins_when_disagree', 0)
+            mod_i_wins_disagree = dominance.get('mod1_wins_when_disagree', 0)
+            print(f"  {mod_j} has higher confidence in {mod_j_dominance_rate*100:.1f}% of cases")
+            print(f"  Average confidence difference ({mod_j} - {mod_i}): {avg_conf_diff:+.4f}")
+            print(f"  When modalities disagree:")
+            print(f"    {mod_j} wins (higher confidence): {mod_j_wins_disagree} cases")
+            print(f"    {mod_i} wins (higher confidence): {mod_i_wins_disagree} cases")
     
-    # MULTIMODAL BIAS ANALYSIS
+    # Backward compatibility: show first pair dominance if available
+    mod2_dominance = evaluation_results.get('mod2_dominance_analysis')
+    if mod2_dominance and not pairwise_dominance:
+        print("\n" + "-"*80)
+        mod1_name = modalities[0] if len(modalities) >= 1 else "Mod1"
+        mod2_name = modalities[1] if len(modalities) >= 2 else "Mod2"
+        print(f"{mod2_name.upper()} DOMINANCE ANALYSIS")
+        print("-"*80)
+        mod2_dominance_rate = mod2_dominance.get('mod2_higher_confidence_rate', 0.0)
+        avg_conf_diff = mod2_dominance.get('avg_confidence_difference', 0.0)
+        mod2_wins_disagree = mod2_dominance.get('mod2_wins_when_disagree', 0)
+        mod1_wins_disagree = mod2_dominance.get('mod1_wins_when_disagree', 0)
+        print(f"{mod2_name} has higher confidence in {mod2_dominance_rate*100:.1f}% of cases")
+        print(f"Average confidence difference ({mod2_name} - {mod1_name}): {avg_conf_diff:+.4f}")
+        print(f"When modalities disagree:")
+        print(f"  {mod2_name} wins (higher confidence): {mod2_wins_disagree} cases")
+        print(f"  {mod1_name} wins (higher confidence): {mod1_wins_disagree} cases")
+    
+    # MULTIMODAL BIAS ANALYSIS (for all combined modalities)
+    combined_bias_analyses = evaluation_results.get('combined_bias_analyses', {})
+    if combined_bias_analyses:
+        print("\n" + "-"*80)
+        print("MULTIMODAL PREDICTION ANALYSIS (BIAS DETECTION)")
+        print("-"*80)
+        for combined_name, bias_analysis in sorted(combined_bias_analyses.items()):
+            component_mods = combined_name.split('+')
+            if len(component_mods) >= 2:
+                mod1_name = component_mods[0]
+                mod2_name = component_mods[-1]  # Last modality in combination
+                print(f"\n{combined_name}:")
+                matches_mod2_rate = bias_analysis.get('combined_matches_mod2_rate', 0.0)
+                matches_mod1_rate = bias_analysis.get('combined_matches_mod1_rate', 0.0)
+                mod2_bias_score = bias_analysis.get('mod2_bias_score', 0.0)
+                true_combination_rate = bias_analysis.get('true_combination_rate', 0.0)
+                simple_mod2_bias = bias_analysis.get('simple_mod2_bias', False)
+                print(f"  Combined matches {mod2_name}: {matches_mod2_rate*100:.1f}%")
+                print(f"  Combined matches {mod1_name}: {matches_mod1_rate*100:.1f}%")
+                print(f"  {mod2_name} bias score (matches {mod2_name} when {mod1_name}≠{mod2_name}): {mod2_bias_score*100:.1f}%")
+                print(f"  True combination rate: {true_combination_rate*100:.1f}%")
+                if simple_mod2_bias:
+                    print(f"  ⚠️  SIMPLE {mod2_name} BIAS DETECTED (>20% difference)")
+    
+    # Backward compatibility: show first combined bias if available
     multimodal_bias = evaluation_results.get('multimodal_bias_analysis')
-    if multimodal_bias:
+    if multimodal_bias and not combined_bias_analyses:
         print("\n" + "-"*80)
         print("MULTIMODAL PREDICTION ANALYSIS")
         print("-"*80)
-        matches_pet_rate = multimodal_bias.get('combined_matches_pet_rate', 0.0)
-        matches_ct_rate = multimodal_bias.get('combined_matches_ct_rate', 0.0)
-        pet_bias_score = multimodal_bias.get('pet_bias_score', 0.0)
+        matches_mod2_rate = multimodal_bias.get('combined_matches_mod2_rate', multimodal_bias.get('combined_matches_pet_rate', 0.0))
+        matches_mod1_rate = multimodal_bias.get('combined_matches_mod1_rate', multimodal_bias.get('combined_matches_ct_rate', 0.0))
+        mod2_bias_score = multimodal_bias.get('mod2_bias_score', multimodal_bias.get('pet_bias_score', 0.0))
         true_combination_rate = multimodal_bias.get('true_combination_rate', 0.0)
-        print(f"Combined predictions match PET: {matches_pet_rate*100:.1f}%")
-        print(f"Combined predictions match CT: {matches_ct_rate*100:.1f}%")
-        print(f"PET bias score (matches PET when CT≠PET): {pet_bias_score*100:.1f}%")
+        mod1_name = modalities[0] if len(modalities) >= 1 else "Mod1"
+        mod2_name = modalities[1] if len(modalities) >= 2 else "Mod2"
+        print(f"Combined predictions match {mod2_name}: {matches_mod2_rate*100:.1f}%")
+        print(f"Combined predictions match {mod1_name}: {matches_mod1_rate*100:.1f}%")
+        print(f"{mod2_name} bias score (matches {mod2_name} when {mod1_name}≠{mod2_name}): {mod2_bias_score*100:.1f}%")
         print(f"True combination rate: {true_combination_rate*100:.1f}%")
     
     # ============================================================================
@@ -948,6 +1332,83 @@ def print_evaluation_results(evaluation_results: Dict):
     print("• High Overconf Severity indicates model is very wrong but very confident (worst case)")
     print("• Large gap between Avg Conf (Wrong) and Avg Conf (Correct) suggests poor calibration")
     print("• Models should have LOW confidence when incorrect - high confidence on errors is unreliable")
+    
+    # ============================================================================
+    # FULL N-MODALITY ANALYSIS
+    # ============================================================================
+    pairwise_agreements = evaluation_results.get('pairwise_agreements', {})
+    pairwise_confidence_comparisons = evaluation_results.get('pairwise_confidence_comparisons', {})
+    sequential_analyses = evaluation_results.get('sequential_analyses', {})
+    combined_agreements = evaluation_results.get('combined_agreements', {})
+    
+    if len(modalities) > 2 or len(pairwise_agreements) > 1:
+        print("\n" + "="*80)
+        print("FULL N-MODALITY ANALYSIS")
+        print("="*80)
+        
+        # 1. PAIRWISE COMPARISONS
+        if pairwise_agreements:
+            print("\n" + "-"*80)
+            print("PAIRWISE MODALITY COMPARISONS")
+            print("-"*80)
+            print(f"{'Pair':<20} {'Agreement':<12} {'Disagreement':<15} {'Mod1 Dominates':<18} {'Mod2 Dominates':<18}")
+            print("-"*80)
+            
+            for (mod_i, mod_j), agreement in sorted(pairwise_agreements.items()):
+                agreement_rate = agreement.get('agreement_rate', 0.0)
+                disagreement_rate = agreement.get('disagreement_rate', 0.0)
+                mod_i_dominates = agreement.get('mod1_dominates', 0)
+                mod_j_dominates = agreement.get('mod2_dominates', 0)
+                pair_name = f"{mod_i} vs {mod_j}"
+                print(f"{pair_name:<20} {agreement_rate:<12.4f} {disagreement_rate:<15.4f} {mod_i_dominates:<18} {mod_j_dominates:<18}")
+        
+        # 2. SEQUENTIAL EFFECTS (How each modality affects the next)
+        if sequential_analyses:
+            print("\n" + "-"*80)
+            print("SEQUENTIAL MODALITY EFFECTS")
+            print("-"*80)
+            print("Shows how each modality changes when given context from previous modalities")
+            print()
+            print(f"{'Modality':<15} {'Context From':<25} {'Conf Change':<15} {'Higher Conf Rate':<20}")
+            print("-"*80)
+            
+            for mod, analysis in sorted(sequential_analyses.items()):
+                context_from = analysis.get('context_from', [])
+                comparison = analysis.get('comparison', {})
+                conf_diff = comparison.get('avg_confidence_difference', 0.0)
+                mod2_higher_rate = comparison.get('mod2_higher_confidence_rate', 0.0)
+                context_str = '+'.join(context_from) if context_from else "None"
+                print(f"{mod:<15} {context_str:<25} {conf_diff:<15.4f} {mod2_higher_rate:<20.4f}")
+        
+        # 3. COMBINED MODALITY AGREEMENTS
+        if combined_agreements:
+            print("\n" + "-"*80)
+            print("COMBINED MODALITY AGREEMENTS")
+            print("-"*80)
+            print("Agreement between first modality and combined modalities")
+            print()
+            print(f"{'Combined Modality':<25} {'Agreement Rate':<18} {'Disagreement Rate':<20}")
+            print("-"*80)
+            
+            for combined_name, agreement in sorted(combined_agreements.items()):
+                agreement_rate = agreement.get('agreement_rate', 0.0)
+                disagreement_rate = agreement.get('disagreement_rate', 0.0)
+                print(f"{combined_name:<25} {agreement_rate:<18.4f} {disagreement_rate:<20.4f}")
+        
+        # 4. ALL PAIRWISE CONFIDENCE COMPARISONS
+        if pairwise_confidence_comparisons:
+            print("\n" + "-"*80)
+            print("PAIRWISE CONFIDENCE COMPARISONS")
+            print("-"*80)
+            print(f"{'Pair':<20} {'Mod1 Higher %':<18} {'Mod2 Higher %':<18} {'Avg Diff':<15}")
+            print("-"*80)
+            
+            for (mod_i, mod_j), comparison in sorted(pairwise_confidence_comparisons.items()):
+                mod1_higher = comparison.get('mod1_higher_confidence_rate', 0.0)
+                mod2_higher = comparison.get('mod2_higher_confidence_rate', 0.0)
+                avg_diff = comparison.get('avg_confidence_difference', 0.0)
+                pair_name = f"{mod_i} vs {mod_j}"
+                print(f"{pair_name:<20} {mod1_higher*100:<18.1f} {mod2_higher*100:<18.1f} {avg_diff:<15.4f}")
     
     # ============================================================================
     # ACCURACY (Reference Only - Reliability is Primary Focus)
@@ -998,7 +1459,7 @@ def analyze_certainty_metrics(
             - 'probabilities': dict or array
             - 'logits': optional array
             - 'prediction': int
-        modality_name: Name of modality (e.g., 'CT', 'PET')
+        modality_name: Name of modality (e.g., 'Mod1', 'Mod2')
     
     Returns:
         Dictionary with certainty metrics
@@ -1028,10 +1489,9 @@ def analyze_certainty_metrics(
     cosine_similarities = []  # For comparing with other modalities (if available)
     
     for pred in predictions:
-        # Extract probabilities - strategy depends on whether CT context was used
-        # For CT+PET (with CT context): Use AFTER boosting to show improved performance
-        # For PET alone (without CT context): Use probabilities as-is (no boosting)
-        # For CT: Use probabilities as-is (no boosting)
+        # Extract probabilities - strategy depends on whether context was used
+        # For combined modalities (with context): Use AFTER boosting to show improved performance
+        # For individual modalities (without context): Use probabilities as-is (no boosting)
         used_context = pred.get('used_context', False)
         probs_before_boosting = pred.get('probabilities_before_boosting')
         probs_array = pred.get('probabilities_array')
@@ -1039,16 +1499,16 @@ def analyze_certainty_metrics(
         conf = None
         
         if used_context and probs_array is not None and len(probs_array) >= 2:
-            # CT+PET: Use probabilities AFTER boosting to show improved performance with CT context
-            # This demonstrates that CT context integration improves certainty
+            # Combined modalities: Use probabilities AFTER boosting to show improved performance with context
+            # This demonstrates that context integration improves certainty
             prob_array = np.array(probs_array)
             conf = float(np.max(prob_array))
         elif probs_before_boosting is not None and len(probs_before_boosting) >= 2:
-            # PET alone or CT: Use probabilities BEFORE boosting (shows real model behavior)
+            # Individual modalities: Use probabilities BEFORE boosting (shows real model behavior)
             prob_array = np.array(probs_before_boosting)
             conf = float(np.max(prob_array))
         elif probs_array is not None and len(probs_array) >= 2:
-            # Fallback: Use probabilities_array if before_boosting not available (e.g., CT)
+            # Fallback: Use probabilities_array if before_boosting not available
             prob_array = np.array(probs_array)
             conf = float(np.max(prob_array))
         else:
@@ -1062,12 +1522,14 @@ def analyze_certainty_metrics(
                     prob_array = np.array([probs[keys[0]], probs[keys[1]]])
                 else:
                     prob_array = np.array(list(probs.values()))
-                # If still empty, try specific names
+                # If still empty, try generic class names
                 if prob_array.sum() == 0 or len(prob_array) < 2:
-                    prob_array = np.array([
-                        probs.get('high_grade', probs.get('healthy', 0.0)),
-                        probs.get('low_grade', probs.get('tumor', 0.0))
-                    ])
+                    # Try common class name patterns (generic fallback)
+                    class_keys = list(probs.keys())
+                    if len(class_keys) >= 2:
+                        prob_array = np.array([probs.get(class_keys[0], 0.0), probs.get(class_keys[1], 0.0)])
+                    else:
+                        prob_array = np.array([0.5, 0.5])  # Uniform fallback
             elif isinstance(probs, (list, np.ndarray)) and len(probs) >= 2:
                 prob_array = np.array(probs)
             else:
@@ -1136,9 +1598,9 @@ def analyze_certainty_metrics(
     }
 
 
-def analyze_ct_context_influence(
-    pet_predictions: List[Dict],
-    ct_predictions: Optional[List[Dict]] = None
+def analyze_modality_context_influence(
+    mod2_predictions: List[Dict],
+    mod1_predictions: Optional[List[Dict]] = None
 ) -> Dict:
     """
     CORE RESEARCH QUESTION: Does modality 2 certainty increase when modality 1 context is integrated?
@@ -1147,13 +1609,13 @@ def analyze_ct_context_influence(
     Compares predictions before and after context integration.
     
     Args:
-        pet_predictions: List of modality 2 prediction dicts with 'probabilities_before_boosting'
-        ct_predictions: Optional list of modality 1 predictions for comparison
+        mod2_predictions: List of modality 2 prediction dicts with 'probabilities_before_boosting'
+        mod1_predictions: Optional list of modality 1 predictions for comparison
     
     Returns:
         Dictionary with context influence metrics
     """
-    if not pet_predictions:
+    if not mod2_predictions:
         return {
             'context_changes_prediction': 0,
             'context_increases_confidence': 0,
@@ -1171,9 +1633,9 @@ def analyze_ct_context_influence(
     entropy_changes = []
     significant_increases = 0  # >0.05 increase
     
-    for pet_pred in pet_predictions:
-        probs_before = pet_pred.get('probabilities_before_boosting')
-        probs_after = pet_pred.get('probabilities_array')
+    for mod2_pred in mod2_predictions:
+        probs_before = mod2_pred.get('probabilities_before_boosting')
+        probs_after = mod2_pred.get('probabilities_array')
         
         if probs_before is not None and probs_after is not None:
             probs_before_arr = np.array(probs_before)
@@ -1207,11 +1669,11 @@ def analyze_ct_context_influence(
             elif conf_change < -0.01:  # Decrease
                 decreases_conf += 1
     
-    total = len(pet_predictions)
+    total = len(mod2_predictions)
     avg_conf_change = float(np.mean(confidence_changes)) if confidence_changes else 0.0
     avg_entropy_change = float(np.mean(entropy_changes)) if entropy_changes else 0.0
     
-    # Determine if CT context is actually being used
+    # Determine if modality 1 context is actually being used
     # Criteria: Average confidence increase > 0.02 OR >30% of cases show significant increase
     context_used = avg_conf_change > 0.02 or (significant_increases / total if total > 0 else 0) > 0.3
     
@@ -1227,7 +1689,7 @@ def analyze_ct_context_influence(
         'context_used': context_used,
         'num_samples': total,
         'interpretation': (
-            f"CT context {'IS BEING USED' if context_used else 'APPEARS TO BE IGNORED'}. "
+            f"Modality 1 context {'IS BEING USED' if context_used else 'APPEARS TO BE IGNORED'}. "
             f"Average confidence change: {avg_conf_change:+.4f}. "
             f"{significant_increases}/{total} cases show significant increase (>5%)"
         )
@@ -1235,8 +1697,8 @@ def analyze_ct_context_influence(
 
 
 def analyze_modality_agreement(
-    ct_predictions: List[Dict],
-    pet_predictions: List[Dict],
+    mod1_predictions: List[Dict],
+    mod2_predictions: List[Dict],
     patient_ids: Optional[List[str]] = None,
     debug: bool = False
 ) -> Dict:
@@ -1245,21 +1707,21 @@ def analyze_modality_agreement(
     Focuses on how disagreement affects certainty (confidence, logits).
     
     Args:
-        ct_predictions: List of modality 1 prediction dicts (should have 'prediction', 'confidence', 'logits')
-        pet_predictions: List of modality 2 prediction dicts (should have 'prediction', 'confidence', 'logits')
+        mod1_predictions: List of modality 1 prediction dicts (should have 'prediction', 'confidence', 'logits')
+        mod2_predictions: List of modality 2 prediction dicts (should have 'prediction', 'confidence', 'logits')
         patient_ids: Optional list of patient IDs for matching (if None, assumes same order)
     
     Returns:
         Dictionary with agreement metrics and certainty analysis
     """
-    if len(ct_predictions) != len(pet_predictions):
+    if len(mod1_predictions) != len(mod2_predictions):
         # Try to match by patient_id if provided
         if patient_ids is None:
             return {
                 'agreement_rate': 0.0,
                 'disagreement_rate': 0.0,
-                'ct_dominates': 0,
-                'pet_dominates': 0,
+                'mod1_dominates': 0,
+                'mod2_dominates': 0,
                 'num_pairs': 0,
                 'disagreement_confidence_analysis': {},
                 'disagreement_logit_analysis': {}
@@ -1270,80 +1732,80 @@ def analyze_modality_agreement(
     if patient_ids is not None:
         # Try to match by patient_id + slice_index for more accurate slice-level matching
         # Group predictions by patient_id
-        ct_by_patient = {}
-        pet_by_patient = {}
+        mod1_by_patient = {}
+        mod2_by_patient = {}
         
-        for pid, pred in zip(patient_ids, ct_predictions):
-            if pid not in ct_by_patient:
-                ct_by_patient[pid] = []
-            ct_by_patient[pid].append(pred)
+        for pid, pred in zip(patient_ids, mod1_predictions):
+            if pid not in mod1_by_patient:
+                mod1_by_patient[pid] = []
+            mod1_by_patient[pid].append(pred)
         
-        # For PET predictions, use the same patient_ids list (they should be in same order)
-        # But if lengths differ, we need to extract patient_ids from pet_predictions
-        pet_patient_ids = [p.get('patient_id') if isinstance(p, dict) else None for p in pet_predictions]
-        if len(pet_patient_ids) == len(pet_predictions) and all(pid is not None for pid in pet_patient_ids):
-            # Use patient_ids from pet_predictions
-            for pid, pred in zip(pet_patient_ids, pet_predictions):
-                if pid not in pet_by_patient:
-                    pet_by_patient[pid] = []
-                pet_by_patient[pid].append(pred)
+        # For modality 2 predictions, use the same patient_ids list (they should be in same order)
+        # But if lengths differ, we need to extract patient_ids from mod2_predictions
+        mod2_patient_ids = [p.get('patient_id') if isinstance(p, dict) else None for p in mod2_predictions]
+        if len(mod2_patient_ids) == len(mod2_predictions) and all(pid is not None for pid in mod2_patient_ids):
+            # Use patient_ids from mod2_predictions
+            for pid, pred in zip(mod2_patient_ids, mod2_predictions):
+                if pid not in mod2_by_patient:
+                    mod2_by_patient[pid] = []
+                mod2_by_patient[pid].append(pred)
         else:
             # Fallback: use provided patient_ids (assume same order)
-            for pid, pred in zip(patient_ids[:len(pet_predictions)], pet_predictions):
-                if pid not in pet_by_patient:
-                    pet_by_patient[pid] = []
-                pet_by_patient[pid].append(pred)
+            for pid, pred in zip(patient_ids[:len(mod2_predictions)], mod2_predictions):
+                if pid not in mod2_by_patient:
+                    mod2_by_patient[pid] = []
+                mod2_by_patient[pid].append(pred)
         
         # Match slices within each patient by slice_index if available, otherwise by order
         for pid in set(patient_ids):
-            if pid in ct_by_patient and pid in pet_by_patient:
-                ct_slices = ct_by_patient[pid]
-                pet_slices = pet_by_patient[pid]
+            if pid in mod1_by_patient and pid in mod2_by_patient:
+                mod1_slices = mod1_by_patient[pid]
+                mod2_slices = mod2_by_patient[pid]
                 
                 # Try to match by slice_index
-                ct_by_slice_idx = {}
-                pet_by_slice_idx = {}
+                mod1_by_slice_idx = {}
+                mod2_by_slice_idx = {}
                 
-                for ct_slice in ct_slices:
-                    slice_idx = ct_slice.get('slice_index') if isinstance(ct_slice, dict) else None
+                for mod1_slice in mod1_slices:
+                    slice_idx = mod1_slice.get('slice_index') if isinstance(mod1_slice, dict) else None
                     if slice_idx is not None:
-                        ct_by_slice_idx[slice_idx] = ct_slice
+                        mod1_by_slice_idx[slice_idx] = mod1_slice
                 
-                for pet_slice in pet_slices:
-                    slice_idx = pet_slice.get('slice_index') if isinstance(pet_slice, dict) else None
+                for mod2_slice in mod2_slices:
+                    slice_idx = mod2_slice.get('slice_index') if isinstance(mod2_slice, dict) else None
                     if slice_idx is not None:
-                        pet_by_slice_idx[slice_idx] = pet_slice
+                        mod2_by_slice_idx[slice_idx] = mod2_slice
                 
                 # Match by slice_index if both have it (most accurate)
-                if ct_by_slice_idx and pet_by_slice_idx:
-                    common_slice_indices = set(ct_by_slice_idx.keys()) & set(pet_by_slice_idx.keys())
+                if mod1_by_slice_idx and mod2_by_slice_idx:
+                    common_slice_indices = set(mod1_by_slice_idx.keys()) & set(mod2_by_slice_idx.keys())
                     if common_slice_indices:
                         # Match by slice_index (preferred method)
                         for slice_idx in common_slice_indices:
-                            matched_pairs.append((ct_by_slice_idx[slice_idx], pet_by_slice_idx[slice_idx]))
+                            matched_pairs.append((mod1_by_slice_idx[slice_idx], mod2_by_slice_idx[slice_idx]))
                     else:
                         # No common slice_index values - fall back to patient-level matching
                         # Match one slice per patient (use first available slice from each)
-                        if ct_slices and pet_slices:
+                        if mod1_slices and mod2_slices:
                             # Use first slice from each modality for this patient
-                            matched_pairs.append((ct_slices[0], pet_slices[0]))
+                            matched_pairs.append((mod1_slices[0], mod2_slices[0]))
                 else:
                     # One or both don't have slice_index - fall back to patient-level matching
                     # Match one slice per patient (use first available slice from each)
-                    if ct_slices and pet_slices:
+                    if mod1_slices and mod2_slices:
                         # Use first slice from each modality for this patient
-                        matched_pairs.append((ct_slices[0], pet_slices[0]))
+                        matched_pairs.append((mod1_slices[0], mod2_slices[0]))
     else:
         # Match by index
-        min_len = min(len(ct_predictions), len(pet_predictions))
-        matched_pairs = list(zip(ct_predictions[:min_len], pet_predictions[:min_len]))
+        min_len = min(len(mod1_predictions), len(mod2_predictions))
+        matched_pairs = list(zip(mod1_predictions[:min_len], mod2_predictions[:min_len]))
     
     if not matched_pairs:
         return {
             'agreement_rate': 0.0,
             'disagreement_rate': 0.0,
-            'ct_dominates': 0,
-            'pet_dominates': 0,
+            'mod1_dominates': 0,
+            'mod2_dominates': 0,
             'num_pairs': 0,
             'disagreement_confidence_analysis': {},
             'disagreement_logit_analysis': {}
@@ -1351,128 +1813,128 @@ def analyze_modality_agreement(
     
     agreements = 0
     disagreements = 0
-    ct_dominates = 0
-    pet_dominates = 0
+    mod1_dominates = 0
+    mod2_dominates = 0
     
     # Track certainty metrics for agreement vs disagreement cases
     agreement_confidences = []
-    disagreement_confidences_ct = []
-    disagreement_confidences_pet = []
-    disagreement_logit_magnitudes_ct = []
-    disagreement_logit_magnitudes_pet = []
-    disagreement_logit_variances_ct = []
-    disagreement_logit_variances_pet = []
+    disagreement_confidences_mod1 = []
+    disagreement_confidences_mod2 = []
+    disagreement_logit_magnitudes_mod1 = []
+    disagreement_logit_magnitudes_mod2 = []
+    disagreement_logit_variances_mod1 = []
+    disagreement_logit_variances_mod2 = []
     
-    for idx, (ct_pred, pet_pred) in enumerate(matched_pairs):
-        ct_pred_class = ct_pred.get('prediction')
-        # For CT+PET (PET with CT context), the prediction should be based on final probabilities
-        # Check if this is a CT+PET prediction (has used_context flag)
-        used_context = pet_pred.get('used_context', False)
+    for idx, (mod1_pred, mod2_pred) in enumerate(matched_pairs):
+        mod1_pred_class = mod1_pred.get('prediction')
+        # For Mod1+Mod2 (Mod2 with Mod1 context), the prediction should be based on final probabilities
+        # Check if this is a Mod1+Mod2 prediction (has used_context flag)
+        used_context = mod2_pred.get('used_context', False)
         if used_context:
-            # CT+PET: Recalculate prediction from boosted probabilities (after boosting)
+            # Mod1+Mod2: Recalculate prediction from boosted probabilities (after boosting)
             # This is critical because boosting can change the predicted class
-            pet_probs_after = pet_pred.get('probabilities_array')
-            pet_probs_before = pet_pred.get('probabilities_before_boosting')
+            mod2_probs_after = mod2_pred.get('probabilities_array')
+            mod2_probs_before = mod2_pred.get('probabilities_before_boosting')
             
-            if pet_probs_after is not None and len(pet_probs_after) >= 2:
+            if mod2_probs_after is not None and len(mod2_probs_after) >= 2:
                 # Recalculate prediction from boosted probabilities
-                pet_probs_arr = np.array(pet_probs_after)
+                mod2_probs_arr = np.array(mod2_probs_after)
                 # Ensure probabilities are valid
-                if pet_probs_arr.sum() > 0:
-                    pet_probs_arr = pet_probs_arr / max(pet_probs_arr.sum(), 1e-10)  # Normalize
-                    pet_pred_class = int(np.argmax(pet_probs_arr))
+                if mod2_probs_arr.sum() > 0:
+                    mod2_probs_arr = mod2_probs_arr / max(mod2_probs_arr.sum(), 1e-10)  # Normalize
+                    mod2_pred_class = int(np.argmax(mod2_probs_arr))
                 else:
                     # Fallback to stored prediction if probabilities are invalid
-                    pet_pred_class = pet_pred.get('prediction', 0)
-            elif pet_probs_before is not None and len(pet_probs_before) >= 2:
+                    mod2_pred_class = mod2_pred.get('prediction', 0)
+            elif mod2_probs_before is not None and len(mod2_probs_before) >= 2:
                 # Fallback: use probabilities before boosting if after-boosting not available
-                pet_probs_arr = np.array(pet_probs_before)
-                if pet_probs_arr.sum() > 0:
-                    pet_probs_arr = pet_probs_arr / max(pet_probs_arr.sum(), 1e-10)
-                    pet_pred_class = int(np.argmax(pet_probs_arr))
+                mod2_probs_arr = np.array(mod2_probs_before)
+                if mod2_probs_arr.sum() > 0:
+                    mod2_probs_arr = mod2_probs_arr / max(mod2_probs_arr.sum(), 1e-10)
+                    mod2_pred_class = int(np.argmax(mod2_probs_arr))
                 else:
-                    pet_pred_class = pet_pred.get('prediction', 0)
+                    mod2_pred_class = mod2_pred.get('prediction', 0)
             else:
                 # Final fallback: use stored prediction
-                pet_pred_class = pet_pred.get('prediction', 0)
+                mod2_pred_class = mod2_pred.get('prediction', 0)
         else:
-            # PET alone: Use stored prediction (no boosting applied)
-            pet_pred_class = pet_pred.get('prediction', 0)
+            # Mod2 alone: Use stored prediction (no boosting applied)
+            mod2_pred_class = mod2_pred.get('prediction', 0)
         
         # Ensure prediction classes are valid (0 or 1)
-        ct_pred_class = max(0, min(1, int(ct_pred_class))) if ct_pred_class is not None else 0
-        pet_pred_class = max(0, min(1, int(pet_pred_class))) if pet_pred_class is not None else 0
+        mod1_pred_class = max(0, min(1, int(mod1_pred_class))) if mod1_pred_class is not None else 0
+        mod2_pred_class = max(0, min(1, int(mod2_pred_class))) if mod2_pred_class is not None else 0
         
-        ct_conf = ct_pred.get('confidence', 0.0)
-        pet_conf = pet_pred.get('confidence', 0.0)
+        mod1_conf = mod1_pred.get('confidence', 0.0)
+        mod2_conf = mod2_pred.get('confidence', 0.0)
         
         # Extract logits if available
-        ct_logits = ct_pred.get('logits')
-        pet_logits = pet_pred.get('logits')
+        mod1_logits = mod1_pred.get('logits')
+        mod2_logits = mod2_pred.get('logits')
         
-        if ct_pred_class == pet_pred_class:
+        if mod1_pred_class == mod2_pred_class:
             agreements += 1
             # Average confidence when modalities agree
-            agreement_confidences.append((ct_conf + pet_conf) / 2.0)
+            agreement_confidences.append((mod1_conf + mod2_conf) / 2.0)
         else:
             disagreements += 1
-            disagreement_confidences_ct.append(ct_conf)
-            disagreement_confidences_pet.append(pet_conf)
+            disagreement_confidences_mod1.append(mod1_conf)
+            disagreement_confidences_mod2.append(mod2_conf)
             
             # Analyze logit stability when modalities disagree
-            if ct_logits is not None and len(ct_logits) >= 2:
-                ct_logits_arr = np.array(ct_logits)
-                disagreement_logit_magnitudes_ct.append(calculate_logit_magnitude(ct_logits_arr))
-                disagreement_logit_variances_ct.append(float(np.var(ct_logits_arr)))
+            if mod1_logits is not None and len(mod1_logits) >= 2:
+                mod1_logits_arr = np.array(mod1_logits)
+                disagreement_logit_magnitudes_mod1.append(calculate_logit_magnitude(mod1_logits_arr))
+                disagreement_logit_variances_mod1.append(float(np.var(mod1_logits_arr)))
             
-            if pet_logits is not None and len(pet_logits) >= 2:
-                pet_logits_arr = np.array(pet_logits)
-                disagreement_logit_magnitudes_pet.append(calculate_logit_magnitude(pet_logits_arr))
-                disagreement_logit_variances_pet.append(float(np.var(pet_logits_arr)))
+            if mod2_logits is not None and len(mod2_logits) >= 2:
+                mod2_logits_arr = np.array(mod2_logits)
+                disagreement_logit_magnitudes_mod2.append(calculate_logit_magnitude(mod2_logits_arr))
+                disagreement_logit_variances_mod2.append(float(np.var(mod2_logits_arr)))
             
             # Check which modality has higher confidence when they disagree
-            if ct_conf > pet_conf:
-                ct_dominates += 1
-            elif pet_conf > ct_conf:
-                pet_dominates += 1
+            if mod1_conf > mod2_conf:
+                mod1_dominates += 1
+            elif mod2_conf > mod1_conf:
+                mod2_dominates += 1
     
     total = len(matched_pairs)
     
     # Analyze how disagreement affects confidence
     disagreement_confidence_analysis = {}
-    if disagreement_confidences_ct and disagreement_confidences_pet:
+    if disagreement_confidences_mod1 and disagreement_confidences_mod2:
         disagreement_confidence_analysis = {
-            'avg_ct_confidence_when_disagree': float(np.mean(disagreement_confidences_ct)),
-            'avg_pet_confidence_when_disagree': float(np.mean(disagreement_confidences_pet)),
-            'std_ct_confidence_when_disagree': float(np.std(disagreement_confidences_ct)),
-            'std_pet_confidence_when_disagree': float(np.std(disagreement_confidences_pet)),
-            'confidence_difference': float(np.mean(disagreement_confidences_pet) - np.mean(disagreement_confidences_ct))
+            'avg_mod1_confidence_when_disagree': float(np.mean(disagreement_confidences_mod1)),
+            'avg_mod2_confidence_when_disagree': float(np.mean(disagreement_confidences_mod2)),
+            'std_mod1_confidence_when_disagree': float(np.std(disagreement_confidences_mod1)),
+            'std_mod2_confidence_when_disagree': float(np.std(disagreement_confidences_mod2)),
+            'confidence_difference': float(np.mean(disagreement_confidences_mod2) - np.mean(disagreement_confidences_mod1))
         }
     
     if agreement_confidences:
         disagreement_confidence_analysis['avg_confidence_when_agree'] = float(np.mean(agreement_confidences))
         disagreement_confidence_analysis['confidence_drop_on_disagreement'] = (
             float(np.mean(agreement_confidences)) - 
-            float(np.mean(disagreement_confidences_ct + disagreement_confidences_pet) / 2)
-            if disagreement_confidences_ct and disagreement_confidences_pet else 0.0
+            float(np.mean(disagreement_confidences_mod1 + disagreement_confidences_mod2) / 2)
+            if disagreement_confidences_mod1 and disagreement_confidences_mod2 else 0.0
         )
     
     # Analyze logit stability when modalities disagree
     disagreement_logit_analysis = {}
-    if disagreement_logit_magnitudes_ct and disagreement_logit_magnitudes_pet:
+    if disagreement_logit_magnitudes_mod1 and disagreement_logit_magnitudes_mod2:
         disagreement_logit_analysis = {
-            'avg_logit_magnitude_ct_when_disagree': float(np.mean(disagreement_logit_magnitudes_ct)),
-            'avg_logit_magnitude_pet_when_disagree': float(np.mean(disagreement_logit_magnitudes_pet)),
-            'avg_logit_variance_ct_when_disagree': float(np.mean(disagreement_logit_variances_ct)),
-            'avg_logit_variance_pet_when_disagree': float(np.mean(disagreement_logit_variances_pet)),
-            'logit_instability_indicator': float(np.mean(disagreement_logit_variances_ct + disagreement_logit_variances_pet))
+            'avg_logit_magnitude_mod1_when_disagree': float(np.mean(disagreement_logit_magnitudes_mod1)),
+            'avg_logit_magnitude_mod2_when_disagree': float(np.mean(disagreement_logit_magnitudes_mod2)),
+            'avg_logit_variance_mod1_when_disagree': float(np.mean(disagreement_logit_variances_mod1)),
+            'avg_logit_variance_mod2_when_disagree': float(np.mean(disagreement_logit_variances_mod2)),
+            'logit_instability_indicator': float(np.mean(disagreement_logit_variances_mod1 + disagreement_logit_variances_mod2))
         }
     
     return {
         'agreement_rate': agreements / total if total > 0 else 0.0,
         'disagreement_rate': disagreements / total if total > 0 else 0.0,
-        'ct_dominates': ct_dominates,
-        'pet_dominates': pet_dominates,
+        'mod1_dominates': mod1_dominates,
+        'mod2_dominates': mod2_dominates,
         'num_pairs': total,
         'disagreement_confidence_analysis': disagreement_confidence_analysis,
         'disagreement_logit_analysis': disagreement_logit_analysis
@@ -1621,8 +2083,8 @@ def analyze_logit_similarity(
 
 def analyze_patient_level_agreement(
     slice_level_agreement: Dict,
-    patient_level_ct: List[Dict],
-    patient_level_pet: List[Dict],
+    patient_level_mod1: List[Dict],
+    patient_level_mod2: List[Dict],
     patient_ids: List[str]
 ) -> Dict:
     """
@@ -1640,7 +2102,7 @@ def analyze_patient_level_agreement(
     Returns:
         Dictionary with patient-level agreement analysis
     """
-    if len(patient_level_ct) != len(patient_level_pet) or len(patient_level_ct) != len(patient_ids):
+    if len(patient_level_mod1) != len(patient_level_mod2) or len(patient_level_mod1) != len(patient_ids):
         return {
             'patient_level_agreement_rate': 0.0,
             'slice_level_agreement_rate': 0.0,
@@ -1654,36 +2116,36 @@ def analyze_patient_level_agreement(
     patient_disagreements = 0
     
     # Build lookup dicts by patient_id for safe matching
-    ct_by_patient = {pred.get('patient_id'): pred for pred in patient_level_ct if pred.get('patient_id') is not None}
-    pet_by_patient = {pred.get('patient_id'): pred for pred in patient_level_pet if pred.get('patient_id') is not None}
+    mod1_by_patient = {pred.get('patient_id'): pred for pred in patient_level_mod1 if pred.get('patient_id') is not None}
+    mod2_by_patient = {pred.get('patient_id'): pred for pred in patient_level_mod2 if pred.get('patient_id') is not None}
     
     # Match by patient_id (more robust than zip)
-    matched_patients = set(ct_by_patient.keys()) & set(pet_by_patient.keys())
+    matched_patients = set(mod1_by_patient.keys()) & set(mod2_by_patient.keys())
     
     for patient_id in sorted(matched_patients):
-        ct_pred = ct_by_patient[patient_id]
-        pet_pred = pet_by_patient[patient_id]
+        mod1_pred = mod1_by_patient[patient_id]
+        mod2_pred = mod2_by_patient[patient_id]
         
-        ct_pred_class = ct_pred.get('prediction')
-        pet_pred_class = pet_pred.get('prediction')
+        mod1_pred_class = mod1_pred.get('prediction')
+        mod2_pred_class = mod2_pred.get('prediction')
         
-        if ct_pred_class == pet_pred_class:
+        if mod1_pred_class == mod2_pred_class:
             patient_agreements += 1
         else:
             patient_disagreements += 1
     
     # Fallback: if patient_id matching fails, use zip (original behavior)
-    if not matched_patients and len(patient_level_ct) == len(patient_level_pet):
-        for ct_pred, pet_pred in zip(patient_level_ct, patient_level_pet):
-            ct_pred_class = ct_pred.get('prediction')
-            pet_pred_class = pet_pred.get('prediction')
+    if not matched_patients and len(patient_level_mod1) == len(patient_level_mod2):
+        for mod1_pred, mod2_pred in zip(patient_level_mod1, patient_level_mod2):
+            mod1_pred_class = mod1_pred.get('prediction')
+            mod2_pred_class = mod2_pred.get('prediction')
             
-            if ct_pred_class == pet_pred_class:
+            if mod1_pred_class == mod2_pred_class:
                 patient_agreements += 1
             else:
                 patient_disagreements += 1
     
-    total_patients = len(patient_level_ct)
+    total_patients = len(patient_level_mod1)
     patient_agreement_rate = patient_agreements / total_patients if total_patients > 0 else 0.0
     
     # Get slice-level agreement for comparison
@@ -1705,9 +2167,9 @@ def analyze_patient_level_agreement(
     }
 
 
-def analyze_pet_vs_ct_confidence(
-    ct_predictions: List[Dict],
-    pet_predictions: List[Dict],
+def analyze_modality_confidence_comparison(
+    mod1_predictions: List[Dict],
+    mod2_predictions: List[Dict],
     patient_ids: Optional[List[str]] = None
 ) -> Dict:
     """
@@ -1716,138 +2178,138 @@ def analyze_pet_vs_ct_confidence(
     This is a fundamental question about modality behavior in zero-shot VLMs (generic for any two modalities).
     
     Args:
-        ct_predictions: List of modality 1 prediction dicts
-        pet_predictions: List of modality 2 prediction dicts
+        mod1_predictions: List of modality 1 prediction dicts
+        mod2_predictions: List of modality 2 prediction dicts
         patient_ids: Optional list of patient IDs for matching
     
     Returns:
-        Dictionary with PET vs CT confidence analysis
+        Dictionary with modality confidence comparison analysis
     """
     # Match predictions - aggregate at patient level first
     matched_pairs = []
     if patient_ids is not None:
         # Group by patient_id (preserve all slices)
-        ct_by_patient = {}
-        pet_by_patient = {}
+        mod1_by_patient = {}
+        mod2_by_patient = {}
         
-        for pid, pred in zip(patient_ids, ct_predictions):
+        for pid, pred in zip(patient_ids, mod1_predictions):
             if pid is not None:
-                if pid not in ct_by_patient:
-                    ct_by_patient[pid] = []
-                ct_by_patient[pid].append(pred)
+                if pid not in mod1_by_patient:
+                    mod1_by_patient[pid] = []
+                mod1_by_patient[pid].append(pred)
         
-        for pid, pred in zip(patient_ids, pet_predictions):
+        for pid, pred in zip(patient_ids, mod2_predictions):
             if pid is not None:
-                if pid not in pet_by_patient:
-                    pet_by_patient[pid] = []
-                pet_by_patient[pid].append(pred)
+                if pid not in mod2_by_patient:
+                    mod2_by_patient[pid] = []
+                mod2_by_patient[pid].append(pred)
         
         # Aggregate predictions per patient (weighted by confidence)
         for pid in set(patient_ids):
-            if pid in ct_by_patient and pid in pet_by_patient:
-                ct_slices = ct_by_patient[pid]
-                pet_slices = pet_by_patient[pid]
+            if pid in mod1_by_patient and pid in mod2_by_patient:
+                mod1_slices = mod1_by_patient[pid]
+                mod2_slices = mod2_by_patient[pid]
                 
-                # Aggregate CT: weighted average confidence
-                ct_aggregated = aggregate_patient_predictions(ct_slices)
+                # Aggregate Mod1: weighted average confidence
+                mod1_aggregated = aggregate_patient_predictions(mod1_slices)
                 
-                # Aggregate PET: weighted average confidence
-                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                # Aggregate Mod2: weighted average confidence
+                mod2_aggregated = aggregate_patient_predictions(mod2_slices)
                 
                 # Create aggregated prediction dicts with full info
-                ct_pred = {
-                    'prediction': ct_aggregated['prediction'],
-                    'confidence': ct_aggregated['confidence'],
-                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
-                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else [],
-                    'logits': ct_slices[0].get('logits', []) if ct_slices else []
+                mod1_pred = {
+                    'prediction': mod1_aggregated['prediction'],
+                    'confidence': mod1_aggregated['confidence'],
+                    'probabilities': mod1_slices[0].get('probabilities', {}) if mod1_slices else {},
+                    'probabilities_array': mod1_slices[0].get('probabilities_array', []) if mod1_slices else [],
+                    'logits': mod1_slices[0].get('logits', []) if mod1_slices else []
                 }
                 
-                pet_pred = {
-                    'prediction': pet_aggregated['prediction'],
-                    'confidence': pet_aggregated['confidence'],
-                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
-                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
-                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None,
-                    'used_context': pet_slices[0].get('used_context', False) if pet_slices else False,
-                    'logits': pet_slices[0].get('logits', []) if pet_slices else []
+                mod2_pred = {
+                    'prediction': mod2_aggregated['prediction'],
+                    'confidence': mod2_aggregated['confidence'],
+                    'probabilities': mod2_slices[0].get('probabilities', {}) if mod2_slices else {},
+                    'probabilities_array': mod2_slices[0].get('probabilities_array', []) if mod2_slices else [],
+                    'probabilities_before_boosting': mod2_slices[0].get('probabilities_before_boosting') if mod2_slices else None,
+                    'used_context': mod2_slices[0].get('used_context', False) if mod2_slices else False,
+                    'logits': mod2_slices[0].get('logits', []) if mod2_slices else []
                 }
                 
-                matched_pairs.append((ct_pred, pet_pred))
+                matched_pairs.append((mod1_pred, mod2_pred))
     else:
-        min_len = min(len(ct_predictions), len(pet_predictions))
-        matched_pairs = list(zip(ct_predictions[:min_len], pet_predictions[:min_len]))
+        min_len = min(len(mod1_predictions), len(mod2_predictions))
+        matched_pairs = list(zip(mod1_predictions[:min_len], mod2_predictions[:min_len]))
     
     if not matched_pairs:
         return {
-            'pet_higher_confidence_rate': 0.0,
-            'ct_higher_confidence_rate': 0.0,
+            'mod2_higher_confidence_rate': 0.0,
+            'mod1_higher_confidence_rate': 0.0,
             'avg_confidence_difference': 0.0,
-            'consistent_pet_dominance': False,
+            'consistent_mod2_dominance': False,
             'num_pairs': 0
         }
     
-    pet_higher = 0
-    ct_higher = 0
+    mod2_higher = 0
+    mod1_higher = 0
     equal_conf = 0
     confidence_differences = []
     
-    for ct_pred, pet_pred in matched_pairs:
-        # Use appropriate confidence based on whether PET has CT context
-        ct_conf = ct_pred.get('confidence', 0.0)
-        used_context = pet_pred.get('used_context', False)
+    for mod1_pred, mod2_pred in matched_pairs:
+        # Use appropriate confidence based on whether Mod2 has Mod1 context
+        mod1_conf = mod1_pred.get('confidence', 0.0)
+        used_context = mod2_pred.get('used_context', False)
         
         if used_context:
-            # PET with CT context: Use probabilities_array (after boosting) to show improved performance
-            pet_probs_after = pet_pred.get('probabilities_array')
-            if pet_probs_after is not None and len(pet_probs_after) >= 2:
-                pet_conf = float(np.max(np.array(pet_probs_after)))
+            # Mod2 with Mod1 context: Use probabilities_array (after boosting) to show improved performance
+            mod2_probs_after = mod2_pred.get('probabilities_array')
+            if mod2_probs_after is not None and len(mod2_probs_after) >= 2:
+                mod2_conf = float(np.max(np.array(mod2_probs_after)))
             else:
-                pet_conf = pet_pred.get('confidence', 0.0)
+                mod2_conf = mod2_pred.get('confidence', 0.0)
         else:
-            # PET alone: Use probabilities_before_boosting (shows true model behavior)
-            pet_probs_before = pet_pred.get('probabilities_before_boosting')
-            if pet_probs_before is not None and len(pet_probs_before) >= 2:
-                pet_conf = float(np.max(np.array(pet_probs_before)))
+            # Mod2 alone: Use probabilities_before_boosting (shows true model behavior)
+            mod2_probs_before = mod2_pred.get('probabilities_before_boosting')
+            if mod2_probs_before is not None and len(mod2_probs_before) >= 2:
+                mod2_conf = float(np.max(np.array(mod2_probs_before)))
             else:
-                pet_conf = pet_pred.get('confidence', 0.0)
+                mod2_conf = mod2_pred.get('confidence', 0.0)
         
-        conf_diff = pet_conf - ct_conf
+        conf_diff = mod2_conf - mod1_conf
         confidence_differences.append(conf_diff)
         
-        if pet_conf > ct_conf + 0.01:  # PET higher (with small threshold)
-            pet_higher += 1
-        elif ct_conf > pet_conf + 0.01:  # CT higher
-            ct_higher += 1
+        if mod2_conf > mod1_conf + 0.01:  # Mod2 higher (with small threshold)
+            mod2_higher += 1
+        elif mod1_conf > mod2_conf + 0.01:  # Mod1 higher
+            mod1_higher += 1
         else:
             equal_conf += 1
     
     total = len(matched_pairs)
     avg_conf_diff = np.mean(confidence_differences) if confidence_differences else 0.0
     
-    # Consistent PET dominance: >70% of cases AND average difference > 0.05
-    pet_dominance_rate = pet_higher / total if total > 0 else 0.0
-    consistent_dominance = pet_dominance_rate > 0.7 and avg_conf_diff > 0.05
+    # Consistent Mod2 dominance: >70% of cases AND average difference > 0.05
+    mod2_dominance_rate = mod2_higher / total if total > 0 else 0.0
+    consistent_dominance = mod2_dominance_rate > 0.7 and avg_conf_diff > 0.05
     
     return {
-        'pet_higher_confidence_rate': pet_dominance_rate,
-        'ct_higher_confidence_rate': ct_higher / total if total > 0 else 0.0,
+        'mod2_higher_confidence_rate': mod2_dominance_rate,
+        'mod1_higher_confidence_rate': mod1_higher / total if total > 0 else 0.0,
         'equal_confidence_rate': equal_conf / total if total > 0 else 0.0,
         'avg_confidence_difference': float(avg_conf_diff),
         'std_confidence_difference': float(np.std(confidence_differences)) if confidence_differences else 0.0,
-        'consistent_pet_dominance': consistent_dominance,
+        'consistent_mod2_dominance': consistent_dominance,
         'num_pairs': total,
         'interpretation': (
-            f"PET has higher confidence in {pet_dominance_rate*100:.1f}% of cases. "
-            f"Average difference (PET - CT): {avg_conf_diff:+.4f}. "
-            f"{'PET CONSISTENTLY DOMINATES' if consistent_dominance else 'No consistent dominance pattern'}"
+            f"Modality 2 has higher confidence in {mod2_dominance_rate*100:.1f}% of cases. "
+            f"Average difference (Mod2 - Mod1): {avg_conf_diff:+.4f}. "
+            f"{'Modality 2 CONSISTENTLY DOMINATES' if consistent_dominance else 'No consistent dominance pattern'}"
         )
     }
 
 
 def analyze_multimodality_uncertainty_effect(
-    ct_predictions: List[Dict],
-    pet_predictions: List[Dict],
+    mod1_predictions: List[Dict],
+    mod2_predictions: List[Dict],
     combined_predictions: List[Dict],
     patient_ids: Optional[List[str]] = None
 ) -> Dict:
@@ -1860,9 +2322,9 @@ def analyze_multimodality_uncertainty_effect(
     3. Provides complementary information (true multimodal value)
     
     Args:
-        ct_predictions: List of CT prediction dicts
-        pet_predictions: List of PET prediction dicts
-        combined_predictions: List of combined (CT+PET) prediction dicts
+        mod1_predictions: List of modality 1 prediction dicts
+        mod2_predictions: List of modality 2 prediction dicts
+        combined_predictions: List of combined (mod1+mod2) prediction dicts
         patient_ids: Optional list of patient IDs for matching
     
     Returns:
@@ -1872,21 +2334,21 @@ def analyze_multimodality_uncertainty_effect(
     matched_triplets = []
     if patient_ids is not None:
         # Group by patient_id (preserve all slices)
-        ct_by_patient = {}
-        pet_by_patient = {}
+        mod1_by_patient = {}
+        mod2_by_patient = {}
         combined_by_patient = {}
         
-        for pid, pred in zip(patient_ids, ct_predictions):
+        for pid, pred in zip(patient_ids, mod1_predictions):
             if pid is not None:
-                if pid not in ct_by_patient:
-                    ct_by_patient[pid] = []
-                ct_by_patient[pid].append(pred)
+                if pid not in mod1_by_patient:
+                    mod1_by_patient[pid] = []
+                mod1_by_patient[pid].append(pred)
         
-        for pid, pred in zip(patient_ids, pet_predictions):
+        for pid, pred in zip(patient_ids, mod2_predictions):
             if pid is not None:
-                if pid not in pet_by_patient:
-                    pet_by_patient[pid] = []
-                pet_by_patient[pid].append(pred)
+                if pid not in mod2_by_patient:
+                    mod2_by_patient[pid] = []
+                mod2_by_patient[pid].append(pred)
         
         for pid, pred in zip(patient_ids, combined_predictions):
             if pid is not None:
@@ -1896,30 +2358,30 @@ def analyze_multimodality_uncertainty_effect(
         
         # Aggregate predictions per patient
         for pid in set(patient_ids):
-            if pid in ct_by_patient and pid in pet_by_patient and pid in combined_by_patient:
-                ct_slices = ct_by_patient[pid]
-                pet_slices = pet_by_patient[pid]
+            if pid in mod1_by_patient and pid in mod2_by_patient and pid in combined_by_patient:
+                mod1_slices = mod1_by_patient[pid]
+                mod2_slices = mod2_by_patient[pid]
                 combined_slices = combined_by_patient[pid]
                 
                 # Aggregate each modality
-                ct_aggregated = aggregate_patient_predictions(ct_slices)
-                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                mod1_aggregated = aggregate_patient_predictions(mod1_slices)
+                mod2_aggregated = aggregate_patient_predictions(mod2_slices)
                 combined_aggregated = aggregate_patient_predictions(combined_slices)
                 
                 # Create aggregated prediction dicts
-                ct_pred = {
-                    'prediction': ct_aggregated['prediction'],
-                    'confidence': ct_aggregated['confidence'],
-                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
-                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else []
+                mod1_pred = {
+                    'prediction': mod1_aggregated['prediction'],
+                    'confidence': mod1_aggregated['confidence'],
+                    'probabilities': mod1_slices[0].get('probabilities', {}) if mod1_slices else {},
+                    'probabilities_array': mod1_slices[0].get('probabilities_array', []) if mod1_slices else []
                 }
                 
-                pet_pred = {
-                    'prediction': pet_aggregated['prediction'],
-                    'confidence': pet_aggregated['confidence'],
-                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
-                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
-                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None
+                mod2_pred = {
+                    'prediction': mod2_aggregated['prediction'],
+                    'confidence': mod2_aggregated['confidence'],
+                    'probabilities': mod2_slices[0].get('probabilities', {}) if mod2_slices else {},
+                    'probabilities_array': mod2_slices[0].get('probabilities_array', []) if mod2_slices else [],
+                    'probabilities_before_boosting': mod2_slices[0].get('probabilities_before_boosting') if mod2_slices else None
                 }
                 
                 combined_pred = {
@@ -1929,12 +2391,12 @@ def analyze_multimodality_uncertainty_effect(
                     'probabilities_array': combined_slices[0].get('probabilities_array', []) if combined_slices else []
                 }
                 
-                matched_triplets.append((ct_pred, pet_pred, combined_pred))
+                matched_triplets.append((mod1_pred, mod2_pred, combined_pred))
     else:
-        min_len = min(len(ct_predictions), len(pet_predictions), len(combined_predictions))
+        min_len = min(len(mod1_predictions), len(mod2_predictions), len(combined_predictions))
         matched_triplets = list(zip(
-            ct_predictions[:min_len],
-            pet_predictions[:min_len],
+            mod1_predictions[:min_len],
+            mod2_predictions[:min_len],
             combined_predictions[:min_len]
         ))
     
@@ -1953,21 +2415,21 @@ def analyze_multimodality_uncertainty_effect(
     entropy_changes = []
     confidence_changes = []
     
-    for ct_pred, pet_pred, combined_pred in matched_triplets:
+    for mod1_pred, mod2_pred, combined_pred in matched_triplets:
         # Get probabilities for entropy calculation
-        ct_probs = ct_pred.get('probabilities_array') or list(ct_pred.get('probabilities', {}).values())
-        pet_probs_before = pet_pred.get('probabilities_before_boosting')
-        if pet_probs_before is None:
-            pet_probs_before = pet_pred.get('probabilities_array') or list(pet_pred.get('probabilities', {}).values())
+        mod1_probs = mod1_pred.get('probabilities_array') or list(mod1_pred.get('probabilities', {}).values())
+        mod2_probs_before = mod2_pred.get('probabilities_before_boosting')
+        if mod2_probs_before is None:
+            mod2_probs_before = mod2_pred.get('probabilities_array') or list(mod2_pred.get('probabilities', {}).values())
         combined_probs = combined_pred.get('probabilities_array') or list(combined_pred.get('probabilities', {}).values())
         
         # Calculate entropies
-        if len(ct_probs) >= 2 and len(pet_probs_before) >= 2 and len(combined_probs) >= 2:
-            ct_entropy = calculate_entropy(np.array(ct_probs))
-            pet_entropy = calculate_entropy(np.array(pet_probs_before))
+        if len(mod1_probs) >= 2 and len(mod2_probs_before) >= 2 and len(combined_probs) >= 2:
+            mod1_entropy = calculate_entropy(np.array(mod1_probs))
+            mod2_entropy = calculate_entropy(np.array(mod2_probs_before))
             combined_entropy = calculate_entropy(np.array(combined_probs))
             
-            avg_single_entropy = (ct_entropy + pet_entropy) / 2.0
+            avg_single_entropy = (mod1_entropy + mod2_entropy) / 2.0
             entropy_change = combined_entropy - avg_single_entropy
             entropy_changes.append(entropy_change)
             
@@ -1979,11 +2441,11 @@ def analyze_multimodality_uncertainty_effect(
                 conflict_introductions += 1
         
         # Calculate confidence changes
-        ct_conf = ct_pred.get('confidence', 0.0)
-        pet_conf_before = float(np.max(np.array(pet_probs_before))) if pet_probs_before is not None and len(pet_probs_before) >= 2 else pet_pred.get('confidence', 0.0)
+        mod1_conf = mod1_pred.get('confidence', 0.0)
+        mod2_conf_before = float(np.max(np.array(mod2_probs_before))) if mod2_probs_before is not None and len(mod2_probs_before) >= 2 else mod2_pred.get('confidence', 0.0)
         combined_conf = combined_pred.get('confidence', 0.0)
         
-        avg_single_conf = (ct_conf + pet_conf_before) / 2.0
+        avg_single_conf = (mod1_conf + mod2_conf_before) / 2.0
         conf_change = combined_conf - avg_single_conf
         confidence_changes.append(conf_change)
     
@@ -2017,8 +2479,8 @@ def analyze_multimodality_uncertainty_effect(
 
 
 def analyze_zero_shot_multimodal_value(
-    ct_predictions: List[Dict],
-    pet_predictions: List[Dict],
+    mod1_predictions: List[Dict],
+    mod2_predictions: List[Dict],
     combined_predictions: List[Dict],
     patient_ids: Optional[List[str]] = None
 ) -> Dict:
@@ -2032,9 +2494,9 @@ def analyze_zero_shot_multimodal_value(
     4. Evidence of information integration (not just bias)
     
     Args:
-        ct_predictions: List of CT prediction dicts
-        pet_predictions: List of PET prediction dicts
-        combined_predictions: List of combined (CT+PET) prediction dicts
+        mod1_predictions: List of modality 1 prediction dicts
+        mod2_predictions: List of modality 2 prediction dicts
+        combined_predictions: List of combined (mod1+mod2) prediction dicts
         patient_ids: Optional list of patient IDs for matching
     
     Returns:
@@ -2044,21 +2506,21 @@ def analyze_zero_shot_multimodal_value(
     matched_triplets = []
     if patient_ids is not None:
         # Group by patient_id (preserve all slices)
-        ct_by_patient = {}
-        pet_by_patient = {}
+        mod1_by_patient = {}
+        mod2_by_patient = {}
         combined_by_patient = {}
         
-        for pid, pred in zip(patient_ids, ct_predictions):
+        for pid, pred in zip(patient_ids, mod1_predictions):
             if pid is not None:
-                if pid not in ct_by_patient:
-                    ct_by_patient[pid] = []
-                ct_by_patient[pid].append(pred)
+                if pid not in mod1_by_patient:
+                    mod1_by_patient[pid] = []
+                mod1_by_patient[pid].append(pred)
         
-        for pid, pred in zip(patient_ids, pet_predictions):
+        for pid, pred in zip(patient_ids, mod2_predictions):
             if pid is not None:
-                if pid not in pet_by_patient:
-                    pet_by_patient[pid] = []
-                pet_by_patient[pid].append(pred)
+                if pid not in mod2_by_patient:
+                    mod2_by_patient[pid] = []
+                mod2_by_patient[pid].append(pred)
         
         for pid, pred in zip(patient_ids, combined_predictions):
             if pid is not None:
@@ -2068,30 +2530,30 @@ def analyze_zero_shot_multimodal_value(
         
         # Aggregate predictions per patient
         for pid in set(patient_ids):
-            if pid in ct_by_patient and pid in pet_by_patient and pid in combined_by_patient:
-                ct_slices = ct_by_patient[pid]
-                pet_slices = pet_by_patient[pid]
+            if pid in mod1_by_patient and pid in mod2_by_patient and pid in combined_by_patient:
+                mod1_slices = mod1_by_patient[pid]
+                mod2_slices = mod2_by_patient[pid]
                 combined_slices = combined_by_patient[pid]
                 
                 # Aggregate each modality
-                ct_aggregated = aggregate_patient_predictions(ct_slices)
-                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                mod1_aggregated = aggregate_patient_predictions(mod1_slices)
+                mod2_aggregated = aggregate_patient_predictions(mod2_slices)
                 combined_aggregated = aggregate_patient_predictions(combined_slices)
                 
                 # Create aggregated prediction dicts
-                ct_pred = {
-                    'prediction': ct_aggregated['prediction'],
-                    'confidence': ct_aggregated['confidence'],
-                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
-                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else []
+                mod1_pred = {
+                    'prediction': mod1_aggregated['prediction'],
+                    'confidence': mod1_aggregated['confidence'],
+                    'probabilities': mod1_slices[0].get('probabilities', {}) if mod1_slices else {},
+                    'probabilities_array': mod1_slices[0].get('probabilities_array', []) if mod1_slices else []
                 }
                 
-                pet_pred = {
-                    'prediction': pet_aggregated['prediction'],
-                    'confidence': pet_aggregated['confidence'],
-                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
-                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
-                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None
+                mod2_pred = {
+                    'prediction': mod2_aggregated['prediction'],
+                    'confidence': mod2_aggregated['confidence'],
+                    'probabilities': mod2_slices[0].get('probabilities', {}) if mod2_slices else {},
+                    'probabilities_array': mod2_slices[0].get('probabilities_array', []) if mod2_slices else [],
+                    'probabilities_before_boosting': mod2_slices[0].get('probabilities_before_boosting') if mod2_slices else None
                 }
                 
                 combined_pred = {
@@ -2101,12 +2563,12 @@ def analyze_zero_shot_multimodal_value(
                     'probabilities_array': combined_slices[0].get('probabilities_array', []) if combined_slices else []
                 }
                 
-                matched_triplets.append((ct_pred, pet_pred, combined_pred))
+                matched_triplets.append((mod1_pred, mod2_pred, combined_pred))
     else:
-        min_len = min(len(ct_predictions), len(pet_predictions), len(combined_predictions))
+        min_len = min(len(mod1_predictions), len(mod2_predictions), len(combined_predictions))
         matched_triplets = list(zip(
-            ct_predictions[:min_len],
-            pet_predictions[:min_len],
+            mod1_predictions[:min_len],
+            mod2_predictions[:min_len],
             combined_predictions[:min_len]
         ))
     
@@ -2123,31 +2585,31 @@ def analyze_zero_shot_multimodal_value(
     agreement_cases = []
     disagreement_cases = []
     
-    for ct_pred, pet_pred, combined_pred in matched_triplets:
-        ct_class = ct_pred.get('prediction')
-        pet_class = pet_pred.get('prediction')
+    for mod1_pred, mod2_pred, combined_pred in matched_triplets:
+        mod1_class = mod1_pred.get('prediction')
+        mod2_class = mod2_pred.get('prediction')
         combined_class = combined_pred.get('prediction')
         
-        ct_conf = ct_pred.get('confidence', 0.0)
-        pet_probs_before = pet_pred.get('probabilities_before_boosting')
-        pet_conf = float(np.max(np.array(pet_probs_before))) if pet_probs_before is not None and len(pet_probs_before) >= 2 else pet_pred.get('confidence', 0.0)
+        mod1_conf = mod1_pred.get('confidence', 0.0)
+        mod2_probs_before = mod2_pred.get('probabilities_before_boosting')
+        mod2_conf = float(np.max(np.array(mod2_probs_before))) if mod2_probs_before is not None and len(mod2_probs_before) >= 2 else mod2_pred.get('confidence', 0.0)
         combined_conf = combined_pred.get('confidence', 0.0)
         
-        if ct_class == pet_class:
+        if mod1_class == mod2_class:
             # Modalities agree
             agreement_cases.append({
-                'ct_conf': ct_conf,
-                'pet_conf': pet_conf,
+                'mod1_conf': mod1_conf,
+                'mod2_conf': mod2_conf,
                 'combined_conf': combined_conf,
-                'avg_single_conf': (ct_conf + pet_conf) / 2.0
+                'avg_single_conf': (mod1_conf + mod2_conf) / 2.0
             })
         else:
             # Modalities disagree
             disagreement_cases.append({
-                'ct_conf': ct_conf,
-                'pet_conf': pet_conf,
+                'mod1_conf': mod1_conf,
+                'mod2_conf': mod2_conf,
                 'combined_conf': combined_conf,
-                'avg_single_conf': (ct_conf + pet_conf) / 2.0
+                'avg_single_conf': (mod1_conf + mod2_conf) / 2.0
             })
     
     # When modalities agree: combined should have higher confidence (value of agreement)
@@ -2177,12 +2639,12 @@ def analyze_zero_shot_multimodal_value(
     
     # Information integration: combined predictions are different from both when they disagree
     information_integration_cases = 0
-    for ct_pred, pet_pred, combined_pred in matched_triplets:
-        ct_class = ct_pred.get('prediction')
-        pet_class = pet_pred.get('prediction')
+    for mod1_pred, mod2_pred, combined_pred in matched_triplets:
+        mod1_class = mod1_pred.get('prediction')
+        mod2_class = mod2_pred.get('prediction')
         combined_class = combined_pred.get('prediction')
         
-        if ct_class != pet_class and combined_class != ct_class and combined_class != pet_class:
+        if mod1_class != mod2_class and combined_class != mod1_class and combined_class != mod2_class:
             information_integration_cases += 1
     
     total = len(matched_triplets)
@@ -2215,163 +2677,163 @@ def analyze_zero_shot_multimodal_value(
     }
 
 
-def analyze_pet_dominance(
-    ct_predictions: List[Dict],
-    pet_predictions: List[Dict],
+def analyze_modality_dominance(
+    mod1_predictions: List[Dict],
+    mod2_predictions: List[Dict],
     patient_ids: Optional[List[str]] = None
 ) -> Dict:
     """
-    Analyze whether PET systematically dominates CT (higher confidence).
+    Analyze whether modality 2 systematically dominates modality 1 (higher confidence).
     
     Key questions:
-    - Does PET consistently have higher confidence than CT?
-    - When modalities disagree, does PET win more often?
-    - Is there a systematic bias toward PET?
+    - Does modality 2 consistently have higher confidence than modality 1?
+    - When modalities disagree, does modality 2 win more often?
+    - Is there a systematic bias toward modality 2?
     
     Args:
-        ct_predictions: List of CT prediction dicts
-        pet_predictions: List of PET prediction dicts
+        mod1_predictions: List of modality 1 prediction dicts
+        mod2_predictions: List of modality 2 prediction dicts
         patient_ids: Optional list of patient IDs for matching
     
     Returns:
-        Dictionary with PET dominance analysis
+        Dictionary with modality dominance analysis
     """
     # Match predictions - aggregate at patient level first
     matched_pairs = []
     if patient_ids is not None:
         # Group by patient_id (preserve all slices)
-        ct_by_patient = {}
-        pet_by_patient = {}
+        mod1_by_patient = {}
+        mod2_by_patient = {}
         
-        for pid, pred in zip(patient_ids, ct_predictions):
+        for pid, pred in zip(patient_ids, mod1_predictions):
             if pid is not None:
-                if pid not in ct_by_patient:
-                    ct_by_patient[pid] = []
-                ct_by_patient[pid].append(pred)
+                if pid not in mod1_by_patient:
+                    mod1_by_patient[pid] = []
+                mod1_by_patient[pid].append(pred)
         
-        for pid, pred in zip(patient_ids, pet_predictions):
+        for pid, pred in zip(patient_ids, mod2_predictions):
             if pid is not None:
-                if pid not in pet_by_patient:
-                    pet_by_patient[pid] = []
-                pet_by_patient[pid].append(pred)
+                if pid not in mod2_by_patient:
+                    mod2_by_patient[pid] = []
+                mod2_by_patient[pid].append(pred)
         
         # Aggregate predictions per patient (weighted by confidence)
         for pid in set(patient_ids):
-            if pid in ct_by_patient and pid in pet_by_patient:
-                ct_slices = ct_by_patient[pid]
-                pet_slices = pet_by_patient[pid]
+            if pid in mod1_by_patient and pid in mod2_by_patient:
+                mod1_slices = mod1_by_patient[pid]
+                mod2_slices = mod2_by_patient[pid]
                 
-                # Aggregate CT: weighted average confidence
-                ct_aggregated = aggregate_patient_predictions(ct_slices)
+                # Aggregate Mod1: weighted average confidence
+                mod1_aggregated = aggregate_patient_predictions(mod1_slices)
                 
-                # Aggregate PET: weighted average confidence
-                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                # Aggregate Mod2: weighted average confidence
+                mod2_aggregated = aggregate_patient_predictions(mod2_slices)
                 
                 # Create aggregated prediction dicts with full info
-                ct_pred = {
-                    'prediction': ct_aggregated['prediction'],
-                    'confidence': ct_aggregated['confidence'],
-                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
-                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else [],
-                    'logits': ct_slices[0].get('logits', []) if ct_slices else []
+                mod1_pred = {
+                    'prediction': mod1_aggregated['prediction'],
+                    'confidence': mod1_aggregated['confidence'],
+                    'probabilities': mod1_slices[0].get('probabilities', {}) if mod1_slices else {},
+                    'probabilities_array': mod1_slices[0].get('probabilities_array', []) if mod1_slices else [],
+                    'logits': mod1_slices[0].get('logits', []) if mod1_slices else []
                 }
                 
-                pet_pred = {
-                    'prediction': pet_aggregated['prediction'],
-                    'confidence': pet_aggregated['confidence'],
-                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
-                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
-                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None,
-                    'used_context': pet_slices[0].get('used_context', False) if pet_slices else False,
-                    'logits': pet_slices[0].get('logits', []) if pet_slices else []
+                mod2_pred = {
+                    'prediction': mod2_aggregated['prediction'],
+                    'confidence': mod2_aggregated['confidence'],
+                    'probabilities': mod2_slices[0].get('probabilities', {}) if mod2_slices else {},
+                    'probabilities_array': mod2_slices[0].get('probabilities_array', []) if mod2_slices else [],
+                    'probabilities_before_boosting': mod2_slices[0].get('probabilities_before_boosting') if mod2_slices else None,
+                    'used_context': mod2_slices[0].get('used_context', False) if mod2_slices else False,
+                    'logits': mod2_slices[0].get('logits', []) if mod2_slices else []
                 }
                 
-                matched_pairs.append((ct_pred, pet_pred))
+                matched_pairs.append((mod1_pred, mod2_pred))
     else:
-        min_len = min(len(ct_predictions), len(pet_predictions))
-        matched_pairs = list(zip(ct_predictions[:min_len], pet_predictions[:min_len]))
+        min_len = min(len(mod1_predictions), len(mod2_predictions))
+        matched_pairs = list(zip(mod1_predictions[:min_len], mod2_predictions[:min_len]))
     
     if not matched_pairs:
         return {
-            'pet_higher_confidence_rate': 0.0,
-            'ct_higher_confidence_rate': 0.0,
+            'mod2_higher_confidence_rate': 0.0,
+            'mod1_higher_confidence_rate': 0.0,
             'avg_confidence_difference': 0.0,
-            'pet_wins_when_disagree': 0,
-            'ct_wins_when_disagree': 0,
-            'systematic_pet_bias': False,
+            'mod2_wins_when_disagree': 0,
+            'mod1_wins_when_disagree': 0,
+            'systematic_mod2_bias': False,
             'num_pairs': 0
         }
     
-    pet_higher_conf = 0
-    ct_higher_conf = 0
+    mod2_higher_conf = 0
+    mod1_higher_conf = 0
     confidence_differences = []
-    pet_wins_disagree = 0
-    ct_wins_disagree = 0
+    mod2_wins_disagree = 0
+    mod1_wins_disagree = 0
     
-    for ct_pred, pet_pred in matched_pairs:
-        ct_conf = ct_pred.get('confidence', 0.0)
-        pet_conf = pet_pred.get('confidence', 0.0)
-        ct_pred_class = ct_pred.get('prediction')
-        pet_pred_class = pet_pred.get('prediction')
+    for mod1_pred, mod2_pred in matched_pairs:
+        mod1_conf = mod1_pred.get('confidence', 0.0)
+        mod2_conf = mod2_pred.get('confidence', 0.0)
+        mod1_pred_class = mod1_pred.get('prediction')
+        mod2_pred_class = mod2_pred.get('prediction')
         
-        conf_diff = pet_conf - ct_conf
+        conf_diff = mod2_conf - mod1_conf
         confidence_differences.append(conf_diff)
         
-        if pet_conf > ct_conf:
-            pet_higher_conf += 1
-        elif ct_conf > pet_conf:
-            ct_higher_conf += 1
+        if mod2_conf > mod1_conf:
+            mod2_higher_conf += 1
+        elif mod1_conf > mod2_conf:
+            mod1_higher_conf += 1
         
         # When modalities disagree, which one has higher confidence?
-        if ct_pred_class != pet_pred_class:
-            if pet_conf > ct_conf:
-                pet_wins_disagree += 1
-            elif ct_conf > pet_conf:
-                ct_wins_disagree += 1
+        if mod1_pred_class != mod2_pred_class:
+            if mod2_conf > mod1_conf:
+                mod2_wins_disagree += 1
+            elif mod1_conf > mod2_conf:
+                mod1_wins_disagree += 1
     
     total = len(matched_pairs)
     avg_conf_diff = np.mean(confidence_differences) if confidence_differences else 0.0
     
-    # Determine if there's systematic PET bias
-    # Criteria: PET has higher confidence in >60% of cases AND average difference > 0.05
-    pet_dominance_rate = pet_higher_conf / total if total > 0 else 0.0
-    systematic_bias = pet_dominance_rate > 0.6 and avg_conf_diff > 0.05
+    # Determine if there's systematic Mod2 bias
+    # Criteria: Mod2 has higher confidence in >60% of cases AND average difference > 0.05
+    mod2_dominance_rate = mod2_higher_conf / total if total > 0 else 0.0
+    systematic_bias = mod2_dominance_rate > 0.6 and avg_conf_diff > 0.05
     
     return {
-        'pet_higher_confidence_rate': pet_dominance_rate,
-        'ct_higher_confidence_rate': ct_higher_conf / total if total > 0 else 0.0,
+        'mod2_higher_confidence_rate': mod2_dominance_rate,
+        'mod1_higher_confidence_rate': mod1_higher_conf / total if total > 0 else 0.0,
         'avg_confidence_difference': float(avg_conf_diff),
         'std_confidence_difference': float(np.std(confidence_differences)) if confidence_differences else 0.0,
-        'pet_wins_when_disagree': pet_wins_disagree,
-        'ct_wins_when_disagree': ct_wins_disagree,
-        'systematic_pet_bias': systematic_bias,
+        'mod2_wins_when_disagree': mod2_wins_disagree,
+        'mod1_wins_when_disagree': mod1_wins_disagree,
+        'systematic_mod2_bias': systematic_bias,
         'num_pairs': total,
         'interpretation': (
-            f"PET has higher confidence in {pet_dominance_rate*100:.1f}% of cases. "
+            f"Modality 2 has higher confidence in {mod2_dominance_rate*100:.1f}% of cases. "
             f"Average difference: {avg_conf_diff:+.4f}. "
-            f"{'SYSTEMATIC PET BIAS DETECTED' if systematic_bias else 'No systematic bias detected'}."
+            f"{'SYSTEMATIC Mod2 BIAS DETECTED' if systematic_bias else 'No systematic bias detected'}."
         )
     }
 
 
 def analyze_multimodal_bias(
-    ct_predictions: List[Dict],
-    pet_predictions: List[Dict],
+    mod1_predictions: List[Dict],
+    mod2_predictions: List[Dict],
     combined_predictions: List[Dict],
     patient_ids: Optional[List[str]] = None
 ) -> Dict:
     """
-    Analyze whether multimodal predictions reflect true combination or simple bias toward PET.
+    Analyze whether multimodal predictions reflect true combination or simple bias toward one modality.
     
     Key questions:
-    - Do combined predictions match PET more often than CT?
-    - Are combined predictions truly combining information or just following PET?
+    - Do combined predictions match mod2 more often than mod1?
+    - Are combined predictions truly combining information or just following mod2?
     - What's the correlation between combined predictions and individual modalities?
     
     Args:
-        ct_predictions: List of CT prediction dicts
-        pet_predictions: List of PET prediction dicts
-        combined_predictions: List of combined (CT+PET) prediction dicts
+        mod1_predictions: List of modality 1 prediction dicts
+        mod2_predictions: List of modality 2 prediction dicts
+        combined_predictions: List of combined (mod1+mod2) prediction dicts
         patient_ids: Optional list of patient IDs for matching
     
     Returns:
@@ -2381,21 +2843,21 @@ def analyze_multimodal_bias(
     matched_triplets = []
     if patient_ids is not None:
         # Group by patient_id (preserve all slices)
-        ct_by_patient = {}
-        pet_by_patient = {}
+        mod1_by_patient = {}
+        mod2_by_patient = {}
         combined_by_patient = {}
         
-        for pid, pred in zip(patient_ids, ct_predictions):
+        for pid, pred in zip(patient_ids, mod1_predictions):
             if pid is not None:
-                if pid not in ct_by_patient:
-                    ct_by_patient[pid] = []
-                ct_by_patient[pid].append(pred)
+                if pid not in mod1_by_patient:
+                    mod1_by_patient[pid] = []
+                mod1_by_patient[pid].append(pred)
         
-        for pid, pred in zip(patient_ids, pet_predictions):
+        for pid, pred in zip(patient_ids, mod2_predictions):
             if pid is not None:
-                if pid not in pet_by_patient:
-                    pet_by_patient[pid] = []
-                pet_by_patient[pid].append(pred)
+                if pid not in mod2_by_patient:
+                    mod2_by_patient[pid] = []
+                mod2_by_patient[pid].append(pred)
         
         for pid, pred in zip(patient_ids, combined_predictions):
             if pid is not None:
@@ -2405,30 +2867,30 @@ def analyze_multimodal_bias(
         
         # Aggregate predictions per patient
         for pid in set(patient_ids):
-            if pid in ct_by_patient and pid in pet_by_patient and pid in combined_by_patient:
-                ct_slices = ct_by_patient[pid]
-                pet_slices = pet_by_patient[pid]
+            if pid in mod1_by_patient and pid in mod2_by_patient and pid in combined_by_patient:
+                mod1_slices = mod1_by_patient[pid]
+                mod2_slices = mod2_by_patient[pid]
                 combined_slices = combined_by_patient[pid]
                 
                 # Aggregate each modality
-                ct_aggregated = aggregate_patient_predictions(ct_slices)
-                pet_aggregated = aggregate_patient_predictions(pet_slices)
+                mod1_aggregated = aggregate_patient_predictions(mod1_slices)
+                mod2_aggregated = aggregate_patient_predictions(mod2_slices)
                 combined_aggregated = aggregate_patient_predictions(combined_slices)
                 
                 # Create aggregated prediction dicts
-                ct_pred = {
-                    'prediction': ct_aggregated['prediction'],
-                    'confidence': ct_aggregated['confidence'],
-                    'probabilities': ct_slices[0].get('probabilities', {}) if ct_slices else {},
-                    'probabilities_array': ct_slices[0].get('probabilities_array', []) if ct_slices else []
+                mod1_pred = {
+                    'prediction': mod1_aggregated['prediction'],
+                    'confidence': mod1_aggregated['confidence'],
+                    'probabilities': mod1_slices[0].get('probabilities', {}) if mod1_slices else {},
+                    'probabilities_array': mod1_slices[0].get('probabilities_array', []) if mod1_slices else []
                 }
                 
-                pet_pred = {
-                    'prediction': pet_aggregated['prediction'],
-                    'confidence': pet_aggregated['confidence'],
-                    'probabilities': pet_slices[0].get('probabilities', {}) if pet_slices else {},
-                    'probabilities_array': pet_slices[0].get('probabilities_array', []) if pet_slices else [],
-                    'probabilities_before_boosting': pet_slices[0].get('probabilities_before_boosting') if pet_slices else None
+                mod2_pred = {
+                    'prediction': mod2_aggregated['prediction'],
+                    'confidence': mod2_aggregated['confidence'],
+                    'probabilities': mod2_slices[0].get('probabilities', {}) if mod2_slices else {},
+                    'probabilities_array': mod2_slices[0].get('probabilities_array', []) if mod2_slices else [],
+                    'probabilities_before_boosting': mod2_slices[0].get('probabilities_before_boosting') if mod2_slices else None
                 }
                 
                 combined_pred = {
@@ -2438,93 +2900,93 @@ def analyze_multimodal_bias(
                     'probabilities_array': combined_slices[0].get('probabilities_array', []) if combined_slices else []
                 }
                 
-                matched_triplets.append((ct_pred, pet_pred, combined_pred))
+                matched_triplets.append((mod1_pred, mod2_pred, combined_pred))
     else:
-        min_len = min(len(ct_predictions), len(pet_predictions), len(combined_predictions))
+        min_len = min(len(mod1_predictions), len(mod2_predictions), len(combined_predictions))
         matched_triplets = list(zip(
-            ct_predictions[:min_len],
-            pet_predictions[:min_len],
+            mod1_predictions[:min_len],
+            mod2_predictions[:min_len],
             combined_predictions[:min_len]
         ))
     
     if not matched_triplets:
         return {
-            'combined_matches_pet_rate': 0.0,
-            'combined_matches_ct_rate': 0.0,
-            'pet_bias_score': 0.0,
+            'combined_matches_mod2_rate': 0.0,
+            'combined_matches_mod1_rate': 0.0,
+            'mod2_bias_score': 0.0,
             'true_combination_rate': 0.0,
             'num_triplets': 0
         }
     
-    matches_pet = 0
-    matches_ct = 0
+    matches_mod2 = 0
+    matches_mod1 = 0
     matches_both = 0
     matches_neither = 0
-    pet_bias_cases = 0  # Combined matches PET but not CT
+    mod2_bias_cases = 0  # Combined matches mod2 but not mod1
     
-    for ct_pred, pet_pred, combined_pred in matched_triplets:
-        ct_class = ct_pred.get('prediction')
-        pet_class = pet_pred.get('prediction')
+    for mod1_pred, mod2_pred, combined_pred in matched_triplets:
+        mod1_class = mod1_pred.get('prediction')
+        mod2_class = mod2_pred.get('prediction')
         combined_class = combined_pred.get('prediction')
         
-        if combined_class == pet_class:
-            matches_pet += 1
-        if combined_class == ct_class:
-            matches_ct += 1
-        if combined_class == pet_class and combined_class == ct_class:
+        if combined_class == mod2_class:
+            matches_mod2 += 1
+        if combined_class == mod1_class:
+            matches_mod1 += 1
+        if combined_class == mod2_class and combined_class == mod1_class:
             matches_both += 1
-        elif combined_class != pet_class and combined_class != ct_class:
+        elif combined_class != mod2_class and combined_class != mod1_class:
             matches_neither += 1
         
-        # PET bias: combined matches PET but not CT (when they disagree)
-        if ct_class != pet_class and combined_class == pet_class:
-            pet_bias_cases += 1
+        # Mod2 bias: combined matches mod2 but not mod1 (when they disagree)
+        if mod1_class != mod2_class and combined_class == mod2_class:
+            mod2_bias_cases += 1
     
     total = len(matched_triplets)
     
     # Calculate rates
-    matches_pet_rate = matches_pet / total if total > 0 else 0.0
-    matches_ct_rate = matches_ct / total if total > 0 else 0.0
-    pet_bias_score = pet_bias_cases / total if total > 0 else 0.0
+    matches_mod2_rate = matches_mod2 / total if total > 0 else 0.0
+    matches_mod1_rate = matches_mod1 / total if total > 0 else 0.0
+    mod2_bias_score = mod2_bias_cases / total if total > 0 else 0.0
     
-    # True combination: when CT and PET disagree, combined prediction is different from both
+    # True combination: when mod1 and mod2 disagree, combined prediction is different from both
     # OR when they agree, combined also agrees
     true_combination = 0
-    for ct_pred, pet_pred, combined_pred in matched_triplets:
-        ct_class = ct_pred.get('prediction')
-        pet_class = pet_pred.get('prediction')
+    for mod1_pred, mod2_pred, combined_pred in matched_triplets:
+        mod1_class = mod1_pred.get('prediction')
+        mod2_class = mod2_pred.get('prediction')
         combined_class = combined_pred.get('prediction')
         
-        if ct_class == pet_class:
+        if mod1_class == mod2_class:
             # When modalities agree, combined should also agree (true combination)
-            if combined_class == ct_class:
+            if combined_class == mod1_class:
                 true_combination += 1
         else:
             # When modalities disagree, combined could be:
             # 1. Different from both (true combination/compromise)
             # 2. Same as one (bias toward that modality)
             # For now, we consider "different from both" as true combination
-            if combined_class != ct_class and combined_class != pet_class:
+            if combined_class != mod1_class and combined_class != mod2_class:
                 true_combination += 1
     
     true_combination_rate = true_combination / total if total > 0 else 0.0
     
-    # Determine if there's simple PET bias
-    # Criteria: Combined matches PET significantly more than CT (>20% difference)
-    simple_pet_bias = matches_pet_rate - matches_ct_rate > 0.2
+    # Determine if there's simple mod2 bias
+    # Criteria: Combined matches mod2 significantly more than mod1 (>20% difference)
+    simple_mod2_bias = matches_mod2_rate - matches_mod1_rate > 0.2
     
     return {
-        'combined_matches_pet_rate': matches_pet_rate,
-        'combined_matches_ct_rate': matches_ct_rate,
+        'combined_matches_mod2_rate': matches_mod2_rate,
+        'combined_matches_mod1_rate': matches_mod1_rate,
         'combined_matches_both_rate': matches_both / total if total > 0 else 0.0,
-        'pet_bias_score': pet_bias_score,
+        'mod2_bias_score': mod2_bias_score,
         'true_combination_rate': true_combination_rate,
-        'simple_pet_bias': simple_pet_bias,
+        'simple_mod2_bias': simple_mod2_bias,
         'num_triplets': total,
         'interpretation': (
-            f"Combined matches PET: {matches_pet_rate*100:.1f}%, "
-            f"CT: {matches_ct_rate*100:.1f}%. "
-            f"{'SIMPLE PET BIAS DETECTED' if simple_pet_bias else 'Appears to be true combination'} "
+            f"Combined matches mod2: {matches_mod2_rate*100:.1f}%, "
+            f"mod1: {matches_mod1_rate*100:.1f}%. "
+            f"{'SIMPLE MOD2 BIAS DETECTED' if simple_mod2_bias else 'Appears to be true combination'} "
             f"(True combination rate: {true_combination_rate*100:.1f}%)"
         )
     }
@@ -2543,7 +3005,7 @@ def analyze_overconfidence(
     
     Args:
         predictions: List of prediction dicts with 'prediction', 'label', 'confidence'
-        modality_name: Name of modality (e.g., 'CT', 'PET')
+        modality_name: Name of modality (e.g., 'Mod1', 'Mod2')
         confidence_threshold: Minimum confidence to consider "high-confidence" (default: 0.7)
     
     Returns:
@@ -2663,26 +3125,34 @@ def calculate_patient_level_results(
             context_from = result.get('context_from', [])
             
             # Determine step name (same logic as evaluate_sequential_modalities)
+            # FULLY GENERIC for N modalities - no hardcoded modality indices
             step_name = result.get('step')
             if step_name is None:
                 if len(mods_used) == 1:
                     mod = mods_used[0]
-                    if mod == modalities[0]:
-                        step_name = mod
-                    elif mod == modalities[1]:
-                        if used_context and len(context_from) > 0 and modalities[0] in context_from:
-                            step_name = '+'.join(modalities)
+                    
+                    if used_context and len(context_from) > 0:
+                        # Modality with context: build combined step name
+                        # Sort context_from to match the order in modalities list
+                        sorted_context = [m for m in modalities if m in context_from]
+                        if sorted_context:
+                            # Build step name: "Mod1+Mod2" or "Mod1+Mod2+Mod3", etc.
+                            combined_step_name = '+'.join(sorted_context + [mod])
+                            step_name = combined_step_name
                         else:
+                            # Context not in modalities list, use modality alone
                             step_name = mod
-                elif len(mods_used) == len(modalities) and len(modalities) > 1:
-                    step_name = '+'.join(modalities)
-                else:
-                    # Fallback: use first modality if we can't determine
-                    if mods_used:
-                        step_name = mods_used[0]
                     else:
-                        skipped_no_step_name += 1
-                        continue  # Skip if can't determine step_name
+                        # Modality alone (no context)
+                        step_name = mod
+                elif len(mods_used) > 1:
+                    # Explicit combined modality case (multiple modalities used together)
+                    # Sort by order in modalities list
+                    step_name = '+'.join(sorted(mods_used, key=lambda m: modalities.index(m) if m in modalities else 999))
+                else:
+                    # No modalities used - skip
+                    skipped_no_step_name += 1
+                    continue  # Skip if can't determine step_name
             
             # If step_name is still None, skip this result
             if step_name is None:
@@ -2885,7 +3355,7 @@ def save_results(results: Dict, output_path: str):
     
     # Convert numpy types to Python types for JSON serialization
     def convert_to_serializable(obj):
-        if isinstance(obj, (np.integer, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64)):
+        if isinstance(obj, (np.integer, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64, np.uint8, np.uint16, np.uint32, np.uint64)):
             return int(obj)
         elif isinstance(obj, (np.floating, np.float16, np.float32, np.float64)):
             return float(obj)
@@ -2894,15 +3364,22 @@ def save_results(results: Dict, output_path: str):
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
         elif isinstance(obj, dict):
-            return {k: convert_to_serializable(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
+            return {str(k): convert_to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
             return [convert_to_serializable(item) for item in obj]
-        elif isinstance(obj, tuple):
-            return tuple(convert_to_serializable(item) for item in obj)
+        elif isinstance(obj, set):
+            return [convert_to_serializable(item) for item in sorted(obj)]
         elif obj is None:
             return None
-        return obj
-    
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        else:
+            # For any other type, try to convert to string
+            try:
+                return str(obj)
+            except:
+                return None
+
     try:
         serializable_results = convert_to_serializable(results)
         
@@ -2910,6 +3387,11 @@ def save_results(results: Dict, output_path: str):
             json.dump(serializable_results, f, indent=2)
         
         print(f"Results saved to {output_path}")
-    except Exception as e:
+    except (TypeError, ValueError) as e:
+        # More detailed error message to help debug serialization issues
         print(f"ERROR: Failed to save results to {output_path}: {e}", file=sys.stderr)
+        print(f"Error type: {type(e).__name__}", file=sys.stderr)
+        # Try to find the problematic value
+        import traceback
+        traceback.print_exc()
         raise

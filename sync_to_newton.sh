@@ -24,7 +24,6 @@ rsync -avz --progress \
   src \
   requirements.txt \
   README.md \
-  run.sh \
   data/dataset_config.yaml \
   data/cmb_aml_config.yaml \
   .env.example \
@@ -32,7 +31,6 @@ rsync -avz --progress \
   submit_5_new_models.sh \
   submit_single_model.sh \
   sync_to_newton.sh \
-  verify_before_sync.sh \
   third_party/llava-med/llava/model/builder.py \
   sa808371@newton.ist.ucf.edu:~/Multi-Modal-AI/
 

@@ -543,10 +543,16 @@ def main():
         # If max_samples is specified: take up to max_samples images per modality per patient
         selected_modality_images = {mod: [] for mod in modalities}
 
-        # Shuffle patient images for variety (seed once before loop for reproducibility)
+        # Shuffle patient images for variety
+        # CRITICAL: Set seed before each shuffle to ensure deterministic ordering
+        # This ensures same image selection regardless of modality processing order
         for patient_id in selected_patients:
             for mod in modalities:
                 patient_mod_images = modality_by_patient[mod][patient_id].copy()
+                # Set seed based on patient_id and modality for deterministic but varied shuffling
+                # This ensures same images selected for same patient+modality regardless of processing order
+                seed_value = hash(f"{patient_id}_{mod}") % (2**31)
+                random.seed(seed_value)
                 random.shuffle(patient_mod_images)
 
                 if args.max_samples is None:
