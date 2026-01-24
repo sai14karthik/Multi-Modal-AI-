@@ -17,15 +17,17 @@ import yaml
 DEFAULT_CONFIG: Dict = {
     "dataset_name": "GenericDataset",
     "modalities": {
-        "Mod1": {
-            "folder": "Mod1",
+        # Generic placeholder - actual modalities should be specified in YAML config
+        # This is only used as a fallback when no config is provided
+        "Modality1": {
+            "folder": "Modality1",
             "classes": {
                 "Class0": 0,
                 "Class1": 1,
             },
         },
-        "Mod2": {
-            "folder": "Mod2",
+        "Modality2": {
+            "folder": "Modality2",
             "classes": {
                 "Class0": 0,
                 "Class1": 1,

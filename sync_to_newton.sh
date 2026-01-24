@@ -25,13 +25,13 @@ rsync -avz --progress \
   requirements.txt \
   README.md \
   data/dataset_config.yaml \
-  data/cmb_aml_config.yaml \
   .env.example \
   submit_top5_models.sh \
   submit_5_new_models.sh \
   submit_single_model.sh \
+  test_single_model_local.sh \
   sync_to_newton.sh \
-  third_party/llava-med/llava/model/builder.py \
+  third_party \
   sa808371@newton.ist.ucf.edu:~/Multi-Modal-AI/
 
 echo ""

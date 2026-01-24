@@ -127,37 +127,28 @@ python3 -c "import tiktoken; import google.protobuf; import sentencepiece; print
 }
 
 echo "=========================================="
-echo "Running FORWARD order: ${MODALITIES[*]}"
+echo "Running BOTH orders in one command: ${MOD_SUFFIX_FORWARD} and ${MOD_SUFFIX_REVERSE}"
 echo "=========================================="
-python3 -u -m src.main --data_root "${DATA_ROOT}" --modalities ${MODALITIES[*]} --model_arch ${MODEL_ARCH} --model_name ${MODEL_NAME} --output_dir results --batch_size 8 --dataset_config "${DATASET_CONFIG}" --class_names "${CLASS1}" "${CLASS2}" --temperature 0.8 --aggressive_preprocess ${MAX_SAMPLES_ARG}
+python3 -u -m src.main --data_root "${DATA_ROOT}" --modalities ${MODALITIES[*]} --run_both_orders --model_arch ${MODEL_ARCH} --model_name ${MODEL_NAME} --output_dir results --batch_size 8 --dataset_config "${DATASET_CONFIG}" --class_names "${CLASS1}" "${CLASS2}" --temperature 0.8 --aggressive_preprocess ${MAX_SAMPLES_ARG}
 
-FORWARD_EXIT=\$?
-
-echo ""
-echo "=========================================="
-echo "Running REVERSE order: ${REVERSED_MODALITIES[*]}"
-echo "=========================================="
-python3 -u -m src.main --data_root "${DATA_ROOT}" --modalities ${REVERSED_MODALITIES[*]} --model_arch ${MODEL_ARCH} --model_name ${MODEL_NAME} --output_dir results --batch_size 8 --dataset_config "${DATASET_CONFIG}" --class_names "${CLASS1}" "${CLASS2}" --temperature 0.8 --aggressive_preprocess ${MAX_SAMPLES_ARG}
-
-REVERSE_EXIT=\$?
+EXIT_CODE=\$?
 
 echo ""
 echo "=========================================="
 echo "Job Summary"
 echo "=========================================="
-echo "Forward order (${MOD1}→${MOD2}): Exit code \$FORWARD_EXIT"
-echo "Reverse order (${MOD2}→${MOD1}): Exit code \$REVERSE_EXIT"
+echo "Both orders (${MOD1}→${MOD2} and ${MOD2}→${MOD1}): Exit code \$EXIT_CODE"
 
-if [ \$FORWARD_EXIT -eq 0 ] && [ \$REVERSE_EXIT -eq 0 ]; then
+if [ \$EXIT_CODE -eq 0 ]; then
     echo "✅ Both orders completed successfully!"
     exit 0
 else
-    echo "❌ One or both orders failed"
+    echo "❌ Run failed"
     exit 1
 fi
 EOF
 else
-    cat > "$JOB_SCRIPT" <<EOF
+        cat > "$JOB_SCRIPT" <<EOF
 #!/bin/bash
 #SBATCH --job-name=${JOB_NAME}
 #SBATCH --partition=normal
@@ -174,32 +165,23 @@ cd ~/Multi-Modal-AI
 source venv/bin/activate
 
 echo "=========================================="
-echo "Running FORWARD order: ${MODALITIES[*]}"
+echo "Running BOTH orders in one command: ${MOD_SUFFIX_FORWARD} and ${MOD_SUFFIX_REVERSE}"
 echo "=========================================="
-python3 -u -m src.main --data_root "${DATA_ROOT}" --modalities ${MODALITIES[*]} --model_arch ${MODEL_ARCH} --model_name ${MODEL_NAME} --output_dir results --batch_size 8 --dataset_config "${DATASET_CONFIG}" --class_names "${CLASS1}" "${CLASS2}" --temperature 0.8 --aggressive_preprocess ${MAX_SAMPLES_ARG}
+python3 -u -m src.main --data_root "${DATA_ROOT}" --modalities ${MODALITIES[*]} --run_both_orders --model_arch ${MODEL_ARCH} --model_name ${MODEL_NAME} --output_dir results --batch_size 8 --dataset_config "${DATASET_CONFIG}" --class_names "${CLASS1}" "${CLASS2}" --temperature 0.8 --aggressive_preprocess ${MAX_SAMPLES_ARG}
 
-FORWARD_EXIT=\$?
-
-echo ""
-echo "=========================================="
-echo "Running REVERSE order: ${REVERSED_MODALITIES[*]}"
-echo "=========================================="
-python3 -u -m src.main --data_root "${DATA_ROOT}" --modalities ${REVERSED_MODALITIES[*]} --model_arch ${MODEL_ARCH} --model_name ${MODEL_NAME} --output_dir results --batch_size 8 --dataset_config "${DATASET_CONFIG}" --class_names "${CLASS1}" "${CLASS2}" --temperature 0.8 --aggressive_preprocess ${MAX_SAMPLES_ARG}
-
-REVERSE_EXIT=\$?
+EXIT_CODE=\$?
 
 echo ""
 echo "=========================================="
 echo "Job Summary"
 echo "=========================================="
-echo "Forward order (${MOD1}→${MOD2}): Exit code \$FORWARD_EXIT"
-echo "Reverse order (${MOD2}→${MOD1}): Exit code \$REVERSE_EXIT"
+echo "Both orders (${MOD1}→${MOD2} and ${MOD2}→${MOD1}): Exit code \$EXIT_CODE"
 
-if [ \$FORWARD_EXIT -eq 0 ] && [ \$REVERSE_EXIT -eq 0 ]; then
+if [ \$EXIT_CODE -eq 0 ]; then
     echo "✅ Both orders completed successfully!"
     exit 0
 else
-    echo "❌ One or both orders failed"
+    echo "❌ Run failed"
     exit 1
 fi
 EOF

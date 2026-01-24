@@ -806,12 +806,16 @@ class MultimodalModelWrapper:
         if previous_predictions:
             self._init_enhanced_prompts(previous_predictions=previous_predictions, current_modality=current_modality_name)
             # Extract previous modality prediction and confidence for boosting current modality accuracy
-            # previous_predictions format: {'CT': {'prediction': 0, 'class_name': 'high_grade', 'confidence': 0.85}}
-            for mod, pred_info in previous_predictions.items():
-                # Get the first previous modality's prediction (e.g., CT if current is PET, or PET if current is CT)
-                previous_mod_prediction_for_boosting = pred_info.get('prediction')
-                previous_mod_confidence_for_boosting = pred_info.get('confidence', 0.5)  # Default to 0.5 if not available
-                break  # Take first previous modality
+            # previous_predictions format: {'CT': {'prediction': 0, 'class_name': 'high_grade', 'confidence': 0.85}, 'MR': {...}}
+            # For N modalities: Use the MOST RECENT previous modality (last in dict, which preserves insertion order in Python 3.7+)
+            # This ensures Mod3 with Mod1+Mod2 context uses Mod2 (most recent) for boosting, not Mod1
+            # Get the last (most recent) previous modality for boosting
+            # In Python 3.7+, dict preserves insertion order, so last item is most recent
+            # Get last item (most recent previous modality)
+            last_mod = list(previous_predictions.keys())[-1]
+            last_pred_info = previous_predictions[last_mod]
+            previous_mod_prediction_for_boosting = last_pred_info.get('prediction')
+            previous_mod_confidence_for_boosting = last_pred_info.get('confidence', 0.5)  # Default to 0.5 if not available
         else:
             # No previous predictions, but still need to set current modality for prompts
             self._init_enhanced_prompts(previous_predictions=None, current_modality=current_modality_name)
@@ -1042,10 +1046,9 @@ class MultimodalModelWrapper:
                     current_mod_boost_factor = 5.0   # Increased from 3.5
                     # DO NOT boost previous modality - trust current modality's informed judgment
                 
-                # Apply boost ONLY to current modality (not previous modality) - current_mod_class_idx is defined above in this block
-                # Safety check: only apply if current_mod_class_idx is defined (should always be in this block)
-                if 'current_mod_class_idx' in locals():
-                    probs[current_mod_class_idx] = probs[current_mod_class_idx] * current_mod_boost_factor
+                # Apply boost ONLY to current modality (not previous modality)
+                # current_mod_class_idx is always defined in this block (line 991)
+                probs[current_mod_class_idx] = probs[current_mod_class_idx] * current_mod_boost_factor
                 # Do NOT boost previous modality when current modality disagrees - this is key to improvement!
         
         # Renormalize probabilities after boosting

@@ -85,28 +85,19 @@ cd ~/Multi-Modal-AI
 source venv/bin/activate
 
 echo "=========================================="
-echo "Running FORWARD order: ${MODALITIES[*]}"
+echo "Running BOTH orders in one command: ${MOD_SUFFIX_FORWARD} and ${MOD_SUFFIX_REVERSE}"
 echo "=========================================="
-python3 -u -m src.main --data_root "${DATA_ROOT}" --modalities ${MODALITIES[*]} --model_arch ${model_arch} --model_name ${model_name} --output_dir results --batch_size 8 --dataset_config "${DATASET_CONFIG}" --class_names "${CLASS1}" "${CLASS2}" --temperature 0.8 --aggressive_preprocess
+python3 -u -m src.main --data_root "${DATA_ROOT}" --modalities ${MODALITIES[*]} --run_both_orders --model_arch ${model_arch} --model_name ${model_name} --output_dir results --batch_size 8 --dataset_config "${DATASET_CONFIG}" --class_names "${CLASS1}" "${CLASS2}" --temperature 0.8 --aggressive_preprocess
 
-FORWARD_EXIT=\$?
-
-echo ""
-echo "=========================================="
-echo "Running REVERSE order: ${REVERSED_MODALITIES[*]}"
-echo "=========================================="
-python3 -u -m src.main --data_root "${DATA_ROOT}" --modalities ${REVERSED_MODALITIES[*]} --model_arch ${model_arch} --model_name ${model_name} --output_dir results --batch_size 8 --dataset_config "${DATASET_CONFIG}" --class_names "${CLASS1}" "${CLASS2}" --temperature 0.8 --aggressive_preprocess
-
-REVERSE_EXIT=\$?
+EXIT_CODE=\$?
 
 echo ""
 echo "=========================================="
 echo "Job Summary"
 echo "=========================================="
-echo "Forward order (${MOD1}→${MOD2}): Exit code \$FORWARD_EXIT"
-echo "Reverse order (${MOD2}→${MOD1}): Exit code \$REVERSE_EXIT"
+echo "Both orders (${MOD1}→${MOD2} and ${MOD2}→${MOD1}): Exit code \$EXIT_CODE"
 
-if [ \$FORWARD_EXIT -eq 0 ] && [ \$REVERSE_EXIT -eq 0 ]; then
+if [ \$EXIT_CODE -eq 0 ]; then
     echo "✅ Both orders completed successfully!"
     exit 0
 else

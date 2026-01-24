@@ -184,18 +184,18 @@ class LLaVARunner:
         
         # Generate prediction with output_scores to get logits
         try:
-        output_ids = self.model.generate(
-            input_ids,
-            images=image_tensor,
-            attention_mask=attention_mask,
-            do_sample=False,
+            output_ids = self.model.generate(
+                input_ids,
+                images=image_tensor,
+                attention_mask=attention_mask,
+                do_sample=False,
                 max_new_tokens=10,  # Increased to allow proper response
-            use_cache=True,
-            pad_token_id=self.tokenizer.pad_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-            num_beams=1,  # Greedy decoding (fastest)
-            temperature=0.0,  # Deterministic
-            repetition_penalty=1.0,
+                use_cache=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                num_beams=1,  # Greedy decoding (fastest)
+                temperature=0.0,  # Deterministic
+                repetition_penalty=1.0,
                 return_dict_in_generate=True,
                 output_scores=True,
             )
